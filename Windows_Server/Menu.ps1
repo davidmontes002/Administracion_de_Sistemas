@@ -5,9 +5,11 @@ Clear-Host
 
 . "$PSScriptRoot\Funciones_de_Instalacion\Instalar-DHCP.ps1"
 . "$PSScriptRoot\Funciones_de_Instalacion\Instalar-DNS.ps1"
+. "$PSScriptRoot\Funciones_de_Instalacion\Instalar-SSH.ps1"
 
 . "$PSScriptRoot\Configuracion\Configurar-DHCP.ps1"
 . "$PSScriptRoot\Configuracion\Configurar-DNS.ps1"
+. "$PSScriptRoot\Configuracion\Configurar-SSH.ps1"
 
 . "$PSScriptRoot\Eliminacion\Eliminar-DHCP.ps1"
 . "$PSScriptRoot\Eliminacion\Eliminar-DNS.ps1"
@@ -26,6 +28,7 @@ function Menu-Principal {
         Write-Host "3. Instalar SSH"
         Write-Host "4. Configurar DHCP"
         Write-Host "5. Configurar DNS"
+        Write-Host "5. Configurar SSH"
         Write-Host "6. Eliminar Scope DHCP"
         Write-Host "7. Eliminar Dominio DNS"
         Write-Host "8. Estado Servicios"
@@ -40,9 +43,10 @@ function Menu-Principal {
 	    "3" { Instalar-SSH }
             "4" { Configurar-DHCP }
             "5" { Configurar-DNS }
-            "6" { Eliminar-Scope }
-            "7" { Eliminar-Dominio }
-            "8" { Estado-Servicios }
+            "6" { Configurar-SSH }
+            "7" { Eliminar-Scope }
+            "8" { Eliminar-Dominio }
+            "9" { Estado-Servicios }
             "0" { break }
             default { Write-Host "Opción invalida"; Pause }
         }

@@ -6,8 +6,10 @@
 source ./Validaciones/validaciones.sh
 source ./Funciones_de_Instalacion/Instalar-DHCP.sh
 source ./Funciones_de_Instalacion/Instalar-DNS.sh
+source ./Funciones_de_Instalacion/Instalar-SSH.sh
 source ./Configuraciones/Configurar-DHCP.sh
 source ./Configuraciones/Configurar-DNS.sh
+source ./Configuraciones/Configurar-SSH.sh
 source ./Monitoreos/Lista-Dominios.sh
 source ./Monitoreos/Clientes-Conectados.sh
 source ./Monitoreos/Reinicio.DHCP.sh
@@ -33,14 +35,16 @@ while true; do
                 echo "================================="
                 echo "1) DHCP"
                 echo "2) DNS"
-                echo "3) Volver"
+		echo "3) SSH"
+                echo "4) Volver"
                 echo "================================="
                 read -p "Seleccione una opcion: " subopcion
 
                 case $subopcion in
                     1) Instalar_Silencioso ;;
                     2) Instalar_DNS ;;
-                    3) break ;;
+		    3) Instalar_SSH ;;
+                    4) break ;;
                     *) echo "Opcion invalida"; sleep 2 ;;
                 esac
             done
@@ -53,7 +57,8 @@ while true; do
                 echo "================================="
                 echo "1) Configurar DHCP"
                 echo "2) Configuracion DNS"
-                echo "3) Volver"
+		echo "3) Configurar_SSH"
+                echo "4) Volver"
                 echo "================================="
                 read -p "Seleccione una opcion: " subopcion
 
@@ -79,7 +84,8 @@ while true; do
                             esac
                         done
                         ;;
-                    3) break ;;
+		    3) Configurar_SSH ;;
+                    4) break ;;
                     *) echo "Opcion invalida"; sleep 2 ;;
                 esac
             done

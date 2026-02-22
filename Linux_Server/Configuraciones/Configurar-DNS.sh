@@ -8,7 +8,7 @@ Crear_Dominio() {
     read -p "Nombre del dominio: " DOMINIO
 
     if [[ -z "$DOMINIO" ]]; then
-        echo "El nombre del dominio no puede estar vacío."
+        echo "El nombre del dominio no puede estar vacio."
         return
     fi
 

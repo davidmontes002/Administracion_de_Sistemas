@@ -11,7 +11,7 @@ function Configurar_DHCP() {
         sudo apt install isc-dhcp-server -y >/dev/null 2>&1
         echo "[+] DHCP Server instalado correctamente."
     else
-        echo "[-] DHCP Server ya está instalado."
+        echo "[-] DHCP Server ya esta instalado."
     fi
 
     echo
@@ -99,14 +99,14 @@ read -p "DNS (opcional, Enter para usar IP del servidor): " DNS
 
 if [[ -z "$DNS" ]]; then
     DNS="$IP_SERVER"
-    echo "[+] No se ingresó DNS. Se usará la IP del servidor como DNS: $DNS"
+    echo "[+] No se ingreso DNS. Se usará la IP del servidor como DNS: $DNS"
 else
     while ! validar_ip $DNS; do
         echo "Error: IP invalida"
         read -p "Ingresa IP DNS valida o Enter para usar IP del servidor: " DNS
         if [[ -z "$DNS" ]]; then
             DNS="$IP_SERVER"
-            echo "[+] No se ingresó DNS. Se usará la IP del servidor como DNS: $DNS"
+            echo "[+] No se ingresó DNS. Se usara la IP del servidor como DNS: $DNS"
             break
         fi
     done
@@ -135,6 +135,6 @@ subnet $NET.0 netmask 255.255.255.0 {
 }
 EOF
 
-    echo "Configuración completada."
+    echo "Configuracion completada."
     read -p "Presiona Enter para regresar al menu..."
 }

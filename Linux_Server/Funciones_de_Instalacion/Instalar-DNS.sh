@@ -3,7 +3,7 @@ Instalar_DNS() {
     echo "=== INSTALACION SILENCIOSA DNS (BIND9) ==="
 
     if dpkg -l | grep -q "^ii  bind9 "; then
-        echo "[+] DNS ya está instalado."
+        echo "[+] DNS ya esta instalado."
     else
         sudo apt-get update -qq
         sudo DEBIAN_FRONTEND=noninteractive apt-get install -y bind9 >/dev/null 2>&1
