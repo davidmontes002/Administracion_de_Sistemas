@@ -12,7 +12,7 @@ source ./Configuraciones/Configurar-DNS.sh
 source ./Configuraciones/Configurar-SSH.sh
 source ./Monitoreos/Lista-Dominios.sh
 source ./Monitoreos/Clientes-Conectados.sh
-source ./Monitoreos/Reinicio.DHCP.sh
+source ./Monitoreos/Reinicio-DHCP.sh
 
 while true; do
     clear
