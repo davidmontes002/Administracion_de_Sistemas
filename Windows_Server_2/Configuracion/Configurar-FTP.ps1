@@ -49,7 +49,9 @@ function Registrar-Alumno-FTP {
 
     # Permisos de solo lectura para la carpeta Public
     # Nota: Usa "Users" si tu Windows Server está en inglés, o "Usuarios" si está en español.
-    icacls "$rutaPublicFisica" /grant:r "Usuarios:(OI)(CI)R" /T /Q | Out-Null
+    Write-Host "[*] Aplicando permisos NTFS..." -ForegroundColor Cyan
+    icacls "$rutaUser" /inheritance:r /grant:r "${user}:(RX)" /grant:r "Administradores:(OI)(CI)F" /grant:r "SYSTEM:(OI)(CI)F" /Q | Out-Null
+icacls "$rutaUser\$user" /grant:r "${user}:(OI)(CI)M" /T /Q | Out-Null
 
     # 4. Configurar Directorios Virtuales
     $siteName = "FTPServer_Admin"
