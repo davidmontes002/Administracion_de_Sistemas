@@ -2,6 +2,8 @@ Instalar_DNS() {
     echo
     echo "=== INSTALACION SILENCIOSA DNS (BIND9) ==="
 
+    sudo mkdir -p /etc/bind
+
     if dpkg -l | grep -q "^ii  bind9 "; then
         echo "[+] DNS ya esta instalado."
     else
