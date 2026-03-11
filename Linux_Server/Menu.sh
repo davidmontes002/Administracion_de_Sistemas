@@ -15,6 +15,7 @@ source ./Funciones_de_Instalacion/Instalar-FTP.sh
 source ./Configuraciones/Configurar-DHCP.sh
 source ./Configuraciones/Configurar-DNS.sh
 source ./Configuraciones/Configurar-SSH.sh
+source ./Configuraciones/http_funciones.sh
 source ./Configuraciones/FTP_conf/Registro_grupos.sh
 source ./Configuraciones/FTP_conf/Registro_alumnos.sh
 source ./Configuraciones/FTP_conf/cambio_grupo.sh
@@ -47,7 +48,8 @@ while true; do
 		echo "2) DNS"
 		echo "3) SSH"
 		echo "4) FTP"
-		echo "5) Volver"
+		echo "5) HTTP"
+		echo "6) Volver"
                 echo "================================="
                 read -p "Seleccione una opcion: " subopcion
 
@@ -56,7 +58,29 @@ while true; do
                     2) Instalar_DNS ;;
 		    3) Instalar_SSH ;;
 		    4) Instalar_FTP ;;
-                    5) break ;;
+                    5)
+                        while true; do
+                            clear
+                            echo "================================="
+                            echo "        	HTTP"
+                            echo "================================="
+                            echo "1) Apache"
+                            echo "2) Nginx"
+			    echo "3) Tomcat"
+                            echo "4) Volver"
+                            echo "================================="
+                            read -p "Seleccione una opcion: " httpop
+
+                            case $httpop in
+                                1) Desplegar_Apache2 ;;
+                                2) Desplegar_Nginx ;;
+				3) Desplegar_Tomcat ;;
+                                4) break ;;
+                                *) echo "Opcion invalida"; sleep 2 ;;
+                            esac
+                        done
+                        ;;
+                    6) break ;;
                     *) echo "Opcion invalida"; sleep 2 ;;
                 esac
             done

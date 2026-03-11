@@ -12,7 +12,8 @@ Clear-Host
 . "$PSScriptRoot\Configuracion\Configurar-DNS.ps1"
 . "$PSScriptRoot\Configuracion\Configurar-SSH.ps1"
 . "$PSScriptRoot\Configuracion\Configurar-FTP.ps1"
-. "$PSScriptRoot\Configuracion\Inicializar.ps1"
+. "$PSScriptRoot\Configuracion\Inicializar-FTP.ps1"
+. "$PSScriptRoot\Configuracion\http_funciones.ps1"
 
 . "$PSScriptRoot\Eliminacion\Eliminar-DHCP.ps1"
 . "$PSScriptRoot\Eliminacion\Eliminar-DNS.ps1"
@@ -40,7 +41,8 @@ function Menu-Principal {
 	Write-Host "12. Configurar Acceso Anónimo"
 	Write-Host "13. Inicar FTP"
         Write-Host "14. Estado Servicios"
-        Write-Host "15. Salir"
+	Write-Host "15. Servidores Web (HTTP)"
+        Write-Host "16. Salir"
         Write-Host ""
 
         $op = Read-Host "Seleccione una opcion"
@@ -60,8 +62,20 @@ function Menu-Principal {
 	    "12" { Configurar-Anonimo-FTP }
 	    "13" { Inicializar-Sitio-FTP }
             "14" { Estado-Servicios }
-            "15" { break }
-            default { Write-Host "Opción invalida"; Pause }
+	    "15" { 
+                Clear-Host
+                Write-Host "=== DESPLIEGUE HTTP ==="
+                Write-Host "1. Desplegar IIS (Requisito Forzoso)"
+                Write-Host "2. Desplegar Nginx (via Chocolatey)"
+                Write-Host "3. Desplegar Apache (via Chocolatey)"
+                $subOp = Read-Host "Seleccione el servidor"
+                if ($subOp -eq "1") { Desplegar-IIS }
+                elseif ($subOp -eq "2") { Desplegar-Nginx-Windows }
+                elseif ($subOp -eq "3") { Desplegar-Apache-Windows }
+                else { Write-Host "Opcion invalida"; Pause }
+            }
+            "16" { break }
+            default { Write-Host "Opcion invalida"; Pause }
         }
 
     } while ($op -ne "0")
