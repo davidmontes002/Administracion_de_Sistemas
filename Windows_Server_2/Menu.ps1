@@ -38,7 +38,7 @@ function Menu-Principal {
         Write-Host "9. Eliminar Dominio DNS"
 	Write-Host "10. Registrar Grupo FTP"
 	Write-Host "11. Registrar Alumno FTP"
-	Write-Host "12. Configurar Acceso Anónimo"
+	Write-Host "12. Configurar Acceso Anonimo"
 	Write-Host "13. Inicar FTP"
         Write-Host "14. Estado Servicios"
 	Write-Host "15. Servidores Web (HTTP)"

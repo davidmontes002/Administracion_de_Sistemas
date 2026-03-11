@@ -28,6 +28,48 @@ function Instalar-Chocolatey {
     }
 }
 
+# Nueva función inteligente para seleccionar versiones en Windows
+function Seleccionar-Version-Choco {
+    param([string]$Paquete)
+    
+    Write-Host "[*] Consultando repositorios para $Paquete..." -ForegroundColor Cyan
+    
+    # Obtenemos todas las versiones (la más nueva arriba, la más vieja abajo)
+    $lineas = choco search $Paquete --exact --all-versions --limit-output 2>$null
+    if (-not $lineas) {
+        Write-Host "[-] Error: No se encontraron versiones para $Paquete." -ForegroundColor Red
+        return $null
+    }
+    
+    $versiones = $lineas | ForEach-Object { ($_ -split '\|')[1] }
+    
+    $verLatest = $versiones[0]
+    $verOldest = $versiones[-1]
+    
+    # Buscamos la versión estable/candidata por defecto
+    $estableRaw = choco search $Paquete --exact --limit-output 2>$null | Select-Object -First 1
+    $verLts = ($estableRaw -split '\|')[1]
+    
+    if ([string]::IsNullOrWhiteSpace($verLts)) {
+        $verLts = $verLatest
+    }
+    
+    Write-Host "Versiones disponibles para $Paquete :"
+    Write-Host "  1) Versión LTS    : $verLts"
+    Write-Host "  2) Versión Latest : $verLatest"
+    Write-Host "  3) Versión Oldest : $verOldest"
+    
+    $sel = Read-Host "Seleccione el número de la versión deseada"
+    
+    if ($sel -eq "1") { return $verLts }
+    elseif ($sel -eq "2") { return $verLatest }
+    elseif ($sel -eq "3") { return $verOldest }
+    else {
+        Write-Host "[-] Selección inválida." -ForegroundColor Red
+        return $null
+    }
+}
+
 # ==============================================================
 # DESPLIEGUE DE IIS (INTERNET INFORMATION SERVICES)
 # ==============================================================
@@ -103,24 +145,13 @@ function Desplegar-Nginx-Windows {
 
     Instalar-Chocolatey
 
-    Write-Host "[*] Consultando versiones de Nginx en repositorios..." -ForegroundColor Cyan
-    $versiones = choco search nginx --exact --all-versions --limit-output | ForEach-Object { ($_ -split '\|')[1] }
-    
-    if (-not $versiones) {
-        Write-Host "[-] No se encontraron versiones de Nginx." -ForegroundColor Red
-        Pause; return
-    }
+# --- EL PARCHE HACKER ---
+    Write-Host "[*] Instalando extensiones Legacy para compatibilidad..." -ForegroundColor Cyan
+    choco install chocolatey-core.extension -y --force --erroraction silentlycontinue | Out-Null
+    # ------------------------
 
-    Write-Host "Versiones disponibles:"
-    for ($i = 0; $i -lt 3; $i++) {
-        if ($versiones[$i]) { Write-Host "  $($i+1)) $($versiones[$i])" }
-    }
-
-    $sel = Read-Host "Seleccione el número de la versión"
-    $versionElegida = $versiones[[int]$sel - 1]
-
+    $versionElegida = Seleccionar-Version-Choco -Paquete "nginx"
     if (-not $versionElegida) {
-        Write-Host "[-] Selección inválida." -ForegroundColor Red
         Pause; return
     }
     Write-Host "[+] Versión seleccionada: $versionElegida" -ForegroundColor Green
@@ -133,7 +164,6 @@ function Desplegar-Nginx-Windows {
     } while ($estado -ne 0)
 
     Write-Host "[*] Instalando Nginx $versionElegida..." -ForegroundColor Cyan
-    # SOLUCIÓN: Le pasamos el puerto directamente al instalador para que no choque con IIS
     choco install nginx --version $versionElegida -y --force --package-parameters="/port:$PUERTO"
 
     Write-Host "[*] Localizando binarios de Nginx dinámicamente..." -ForegroundColor Cyan
@@ -216,24 +246,13 @@ function Desplegar-Apache-Windows {
 
     Instalar-Chocolatey
 
-    Write-Host "[*] Consultando versiones de Apache en repositorios..." -ForegroundColor Cyan
-    $versiones = choco search apache-httpd --exact --all-versions --limit-output | ForEach-Object { ($_ -split '\|')[1] }
-    
-    if (-not $versiones) {
-        Write-Host "[-] No se encontraron versiones de Apache." -ForegroundColor Red
-        Pause; return
-    }
+# --- EL PARCHE HACKER ---
+    Write-Host "[*] Instalando extensiones Legacy para compatibilidad..." -ForegroundColor Cyan
+    choco install chocolatey-core.extension -y --force --erroraction silentlycontinue | Out-Null
+    # ------------------------
 
-    Write-Host "Versiones disponibles:"
-    for ($i = 0; $i -lt 3; $i++) {
-        if ($versiones[$i]) { Write-Host "  $($i+1)) $($versiones[$i])" }
-    }
-
-    $sel = Read-Host "Seleccione el número de la versión"
-    $versionElegida = $versiones[[int]$sel - 1]
-
+    $versionElegida = Seleccionar-Version-Choco -Paquete "apache-httpd"
     if (-not $versionElegida) {
-        Write-Host "[-] Selección inválida." -ForegroundColor Red
         Pause; return
     }
     Write-Host "[+] Versión seleccionada: $versionElegida" -ForegroundColor Green
@@ -250,23 +269,9 @@ function Desplegar-Apache-Windows {
 
     Write-Host "[*] Localizando binarios de Apache dinámicamente..." -ForegroundColor Cyan
     $apacheDir = $null
-    Write-Host "[*] Localizando binarios de Apache dinámicamente..." -ForegroundColor Cyan
-    $apacheDir = $null
     
     # Agregamos $env:APPDATA (que es la carpeta Roaming) y C:\ para atraparlo donde sea
     $posiblesRutas = @("C:\tools", "C:\Apache24", "C:\ProgramData\chocolatey\lib", $env:APPDATA)
-
-    # Busca exactamente dónde quedó el httpd.exe
-    foreach ($ruta in $posiblesRutas) {
-        if (Test-Path $ruta) {
-            $busqueda = Get-ChildItem -Path $ruta -Filter "httpd.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($busqueda) {
-                # Como httpd.exe está en la carpeta "bin", necesitamos la carpeta padre (la raíz de Apache)
-                $apacheDir = (Get-Item $busqueda.DirectoryName).Parent.FullName
-                break
-            }
-        }
-    }
 
     # Busca exactamente dónde quedó el httpd.exe
     foreach ($ruta in $posiblesRutas) {
@@ -289,7 +294,7 @@ function Desplegar-Apache-Windows {
 
     $confPath = "$apacheDir\conf\httpd.conf"
 
-Write-Host "[*] Configurando el puerto, rutas y seguridad..." -ForegroundColor Cyan
+    Write-Host "[*] Configurando el puerto, rutas y seguridad..." -ForegroundColor Cyan
     if (Test-Path $confPath) {
         $contenido = Get-Content $confPath
         
@@ -329,7 +334,7 @@ Write-Host "[*] Configurando el puerto, rutas y seguridad..." -ForegroundColor C
     Write-Host "[*] Configurando Firewall..." -ForegroundColor Cyan
     New-NetFirewallRule -DisplayName "HTTP-Apache-Custom" -LocalPort $PUERTO -Protocol TCP -Action Allow -ErrorAction SilentlyContinue | Out-Null
 
-Write-Host "[*] Reiniciando Servicio Apache para aplicar cambios..." -ForegroundColor Cyan
+    Write-Host "[*] Reiniciando Servicio Apache para aplicar cambios..." -ForegroundColor Cyan
     
     $nomServicio = "Apache2.4"
     if (-not (Get-Service -Name $nomServicio -ErrorAction SilentlyContinue)) {
