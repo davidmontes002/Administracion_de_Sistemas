@@ -44,7 +44,6 @@ function Registrar-Alumno-FTP {
     Write-Host "INGRESE A CUÁL GRUPO PERTENECERÁ"
     $opcGrupo = Read-Host "1-Reprobados  2-Recursadores"
     
-    # Asignación segura de variable
     if ($opcGrupo -eq "1") { 
         $FTPUserGroupName = "Reprobados" 
     } else { 
@@ -54,8 +53,6 @@ function Registrar-Alumno-FTP {
     Write-Host "[*] 1. Creando usuario nativo..." -ForegroundColor Cyan
     $passSecure = ConvertTo-SecureString $FTPPassword -AsPlainText -Force
     New-LocalUser -Name $FTPUserName -Password $passSecure -Description "Usuario FTP" | Out-Null
-    
-    # Micro-descanso para que Windows registre el usuario en su base de datos
     Start-Sleep -Seconds 1
 
     Write-Host "[*] 2. Asignando al grupo '$FTPUserGroupName'..." -ForegroundColor Cyan
@@ -64,24 +61,40 @@ function Registrar-Alumno-FTP {
         Add-LocalGroupMember -Group $FTPUserGroupName -Member $FTPUserName
     }
 
-    Write-Host "[*] 3. Creando estructura y Enlaces Simbólicos..." -ForegroundColor Cyan
+    Write-Host "[*] 3. Creando Uniones de Directorio (Nativo NTFS)..." -ForegroundColor Cyan
     $rutaUser = "C:\FTP\LocalUser\$FTPUserName"
     
-    # El parámetro -Force hace que si la carpeta o enlace ya existe a medias, lo arregle/sobreescriba
     if (-not(Test-Path $rutaUser)) { New-Item -Path $rutaUser -ItemType Directory -Force | Out-Null }
     if (-not(Test-Path "$rutaUser\$FTPUserName")) { New-Item -Path "$rutaUser\$FTPUserName" -ItemType Directory -Force | Out-Null }
         
-    New-Item -ItemType SymbolicLink -Path "$rutaUser\General" -Target "C:\FTP\LocalUser\Public\General" -Force | Out-Null
-    New-Item -ItemType SymbolicLink -Path "$rutaUser\$FTPUserGroupName" -Target "C:\FTP\$FTPUserGroupName" -Force | Out-Null
+    if (Test-Path "$rutaUser\General") { cmd /c rmdir "$rutaUser\General" }
+    if (Test-Path "$rutaUser\$FTPUserGroupName") { cmd /c rmdir "$rutaUser\$FTPUserGroupName" }
 
-    Write-Host "[*] 4. Aplicando permisos NTFS..." -ForegroundColor Cyan
-    icacls "C:\FTP\Reprobados" /grant "Reprobados:(OI)(CI)M" /Q | Out-Null
-    icacls "C:\FTP\Recursadores" /grant "Recursadores:(OI)(CI)M" /Q | Out-Null
-    icacls "C:\FTP\LocalUser\Public\General" /grant "Reprobados:(OI)(CI)M" /Q | Out-Null
-    icacls "C:\FTP\LocalUser\Public\General" /grant "Recursadores:(OI)(CI)M" /Q | Out-Null
-    icacls "C:\FTP\LocalUser\Public\General" /grant "IUSR:(OI)(CI)RX" /Q | Out-Null
+    cmd /c mklink /J "$rutaUser\General" "C:\FTP\LocalUser\Public\General" | Out-Null
+    cmd /c mklink /J "$rutaUser\$FTPUserGroupName" "C:\FTP\$FTPUserGroupName" | Out-Null
+
+    Write-Host "[*] 4. Aplicando Permisos Automatizados (Anti-Error 550)..." -ForegroundColor Cyan
     
-    icacls $rutaUser /grant:r "${FTPUserName}:(OI)(CI)M" /Q | Out-Null
+    # Permiso base para que Windows no bloquee el cruce de carpetas
+    icacls "C:\FTP\LocalUser\Public" /grant "Usuarios:(X)" /Q | Out-Null
+    icacls "C:\FTP\LocalUser\Public" /grant "Users:(X)" /Q | Out-Null
+    
+    # Inyección de Control Total (F) directamente al USUARIO RECIÉN CREADO
+    icacls "C:\FTP\LocalUser\Public\General" /grant "${FTPUserName}:(OI)(CI)F" /T /Q | Out-Null
+    icacls "C:\FTP\$FTPUserGroupName" /grant "${FTPUserName}:(OI)(CI)F" /T /Q | Out-Null
+    icacls $rutaUser /grant "${FTPUserName}:(OI)(CI)F" /T /Q | Out-Null
+    
+    # Permisos sobre los enlaces de unión
+    icacls "$rutaUser\General" /grant "${FTPUserName}:(OI)(CI)F" /Q | Out-Null
+    icacls "$rutaUser\$FTPUserGroupName" /grant "${FTPUserName}:(OI)(CI)F" /Q | Out-Null
 
-    Write-Host "[+] ¡Listo! Usuario $FTPUserName creado y enjaulado correctamente." -ForegroundColor Green
+    Write-Host "[*] 5. Refrescando reglas de IIS de forma automática..." -ForegroundColor Cyan
+    Import-Module WebAdministration
+    Clear-WebConfiguration -Filter "/system.ftpServer/security/authorization" -PSPath IIS:\ -Location "FTP"
+    Add-WebConfiguration "/system.ftpServer/security/authorization" -Value @{accessType="Allow";users="?";permissions=1} -PSPath IIS:\ -Location "FTP"
+    Add-WebConfiguration "/system.ftpServer/security/authorization" -Value @{accessType="Allow";users="*";permissions=3} -PSPath IIS:\ -Location "FTP"
+    
+    Restart-Service ftpsvc -Force
+
+    Write-Host "[+] ¡Listo! Usuario $FTPUserName creado y configurado con acceso total 100% automático." -ForegroundColor Green
 }
