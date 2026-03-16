@@ -145,11 +145,6 @@ function Desplegar-Nginx-Windows {
 
     Instalar-Chocolatey
 
-# --- EL PARCHE HACKER ---
-    Write-Host "[*] Instalando extensiones Legacy para compatibilidad..." -ForegroundColor Cyan
-    choco install chocolatey-core.extension -y --force --erroraction silentlycontinue | Out-Null
-    # ------------------------
-
     $versionElegida = Seleccionar-Version-Choco -Paquete "nginx"
     if (-not $versionElegida) {
         Pause; return
@@ -245,11 +240,6 @@ function Desplegar-Apache-Windows {
     Write-Host "=====================================" -ForegroundColor Cyan
 
     Instalar-Chocolatey
-
-# --- EL PARCHE HACKER ---
-    Write-Host "[*] Instalando extensiones Legacy para compatibilidad..." -ForegroundColor Cyan
-    choco install chocolatey-core.extension -y --force --erroraction silentlycontinue | Out-Null
-    # ------------------------
 
     $versionElegida = Seleccionar-Version-Choco -Paquete "apache-httpd"
     if (-not $versionElegida) {

@@ -1,76 +1,87 @@
-$BaseFTP = "C:\inetpub\ftproot"
-
 function Registrar-Grupo-FTP {
-    $grupo = Read-Host "Nombre del grupo (ej. Reprobados)"
-    $rutaGrupo = "$BaseFTP\grupos\$grupo"
+    if (-not $global:ADSI) { $global:ADSI = [ADSI]"WinNT://$env:ComputerName" }
 
-    # 1. Crear carpeta física
-    if (-not (Test-Path $rutaGrupo)) {
-        New-Item -Path $rutaGrupo -ItemType Directory -Force | Out-Null
-        Write-Host "[+] Carpeta de grupo creada en $rutaGrupo" -ForegroundColor Green
+    Write-Host "[*] Inicializando Grupos Base (Reprobados / Recursadores)..." -ForegroundColor Cyan
+
+    # Grupo Reprobados
+    if(-not($global:ADSI.Children | Where-Object { $_.SchemaClassName -eq "Group" -and $_.Name -eq "Reprobados"})){
+        if(-not (Test-Path "C:\FTP\Reprobados")) { New-Item -Path "C:\FTP\Reprobados" -ItemType Directory | Out-Null }
+        $FTPUserGroup = $global:ADSI.Create("Group", "Reprobados")
+        $FTPUserGroup.SetInfo()
+        $FTPUserGroup.Description = "Team de reprobados"
+        $FTPUserGroup.SetInfo()
+        Write-Host "  [+] Grupo Reprobados creado." -ForegroundColor Green
     }
-
-    # 2. En Windows, el grupo debe existir en el sistema
-    if (-not (Get-LocalGroup -Name $grupo -ErrorAction SilentlyContinue)) {
-        New-LocalGroup -Name $grupo
-        Write-Host "[+] Grupo local '$grupo' creado." -ForegroundColor Green
+    
+    # Grupo Recursadores
+    if(-not($global:ADSI.Children | Where-Object { $_.SchemaClassName -eq "Group" -and $_.Name -eq "Recursadores"})){
+        if(-not (Test-Path "C:\FTP\Recursadores")) { New-Item -Path "C:\FTP\Recursadores" -ItemType Directory | Out-Null }
+        $FTPUserGroup = $global:ADSI.Create("Group", "Recursadores")
+        $FTPUserGroup.SetInfo()
+        $FTPUserGroup.Description = "Este grupo son los q valieron queso en ASM y SysADM"
+        $FTPUserGroup.SetInfo()
+        Write-Host "  [+] Grupo Recursadores creado." -ForegroundColor Green
     }
-
-    # 3. Dar permisos al grupo sobre su propia carpeta compartida
-    icacls "$rutaGrupo" /grant:r "${grupo}:(OI)(CI)M" /T /Q | Out-Null
 }
 
 function Registrar-Alumno-FTP {
-    $user = Read-Host "Nombre de usuario"
-    $pass = Read-Host "Contraseña" -AsSecureString
-    $grupo = Read-Host "Grupo al que pertenece (ej. Reprobados)"
+    do {
+        $FTPUserName = Read-Host "Ingrese el nombre de usuario"
+        if ((Get-LocalUser -Name $FTPUserName -ErrorAction SilentlyContinue)) {
+            Write-Host "Usuario ya Existente ($FTPUserName)" -ForegroundColor Red
+        }
+    } while ((Get-LocalUser -Name $FTPUserName -ErrorAction SilentlyContinue))
+    
+    $regex = "^(?=.*[A-Z])(?=.*[a-z])(?=.*[0-9]).{8,}$"
+    
+    do {
+        $FTPPassword = Read-Host "Ingresar una contraseña"
+        if ($FTPPassword -notmatch $regex) {
+            Write-Host "Contraseña no válida. Debe contener Mayúscula, minúscula y mínimo 8 caracteres." -ForegroundColor Red
+        } else { break }
+    } while ($FTPPassword -notmatch $regex)
 
-    # 1. Crear usuario local y añadir al grupo
-    if (-not (Get-LocalUser -Name $user -ErrorAction SilentlyContinue)) {
-        New-LocalUser -Name $user -Password $pass -Description "Usuario FTP" | Out-Null
-        Add-LocalGroupMember -Group $grupo -Member $user
-        Write-Host "[+] Usuario $user creado y añadido a $grupo." -ForegroundColor Green
+    Write-Host "INGRESE A CUÁL GRUPO PERTENECERÁ"
+    $opcGrupo = Read-Host "1-Reprobados  2-Recursadores"
+    
+    # Asignación segura de variable
+    if ($opcGrupo -eq "1") { 
+        $FTPUserGroupName = "Reprobados" 
+    } else { 
+        $FTPUserGroupName = "Recursadores" 
     }
 
-    # 2. Crear carpetas físicas (Usando LocalUser para el aislamiento de IIS)
-    $rutaUser = "$BaseFTP\LocalUser\$user" # <-- CAMBIO CRÍTICO AQUÍ
-    $rutaGrupoFisica = "$BaseFTP\grupos\$grupo"
-    $rutaPublicFisica = "$BaseFTP\Public"
+    Write-Host "[*] 1. Creando usuario nativo..." -ForegroundColor Cyan
+    $passSecure = ConvertTo-SecureString $FTPPassword -AsPlainText -Force
+    New-LocalUser -Name $FTPUserName -Password $passSecure -Description "Usuario FTP" | Out-Null
     
-    # Solo necesitamos la carpeta raíz del usuario, no una anidada
-    if (-not (Test-Path $rutaUser)) { New-Item -Path $rutaUser -ItemType Directory -Force | Out-Null }
-    if (-not (Test-Path $rutaPublicFisica)) { New-Item -Path $rutaPublicFisica -ItemType Directory -Force | Out-Null }
+    # Micro-descanso para que Windows registre el usuario en su base de datos
+    Start-Sleep -Seconds 1
 
-    # 3. AUTOMATIZACIÓN DE PERMISOS (Equivalente a chmod 770)
-    Write-Host "[*] Aplicando permisos NTFS..." -ForegroundColor Cyan
+    Write-Host "[*] 2. Asignando al grupo '$FTPUserGroupName'..." -ForegroundColor Cyan
+    $miembros = Get-LocalGroupMember -Group $FTPUserGroupName -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name
+    if ($miembros -notmatch $FTPUserName) {
+        Add-LocalGroupMember -Group $FTPUserGroupName -Member $FTPUserName
+    }
+
+    Write-Host "[*] 3. Creando estructura y Enlaces Simbólicos..." -ForegroundColor Cyan
+    $rutaUser = "C:\FTP\LocalUser\$FTPUserName"
     
-    # Quitar herencia y dar control total al usuario y al grupo en su carpeta personal
-    icacls "$rutaUser" /inheritance:r /grant:r "${user}:(OI)(CI)F" /grant:r "${grupo}:(OI)(CI)F" /T /Q | Out-Null
+    # El parámetro -Force hace que si la carpeta o enlace ya existe a medias, lo arregle/sobreescriba
+    if (-not(Test-Path $rutaUser)) { New-Item -Path $rutaUser -ItemType Directory -Force | Out-Null }
+    if (-not(Test-Path "$rutaUser\$FTPUserName")) { New-Item -Path "$rutaUser\$FTPUserName" -ItemType Directory -Force | Out-Null }
+        
+    New-Item -ItemType SymbolicLink -Path "$rutaUser\General" -Target "C:\FTP\LocalUser\Public\General" -Force | Out-Null
+    New-Item -ItemType SymbolicLink -Path "$rutaUser\$FTPUserGroupName" -Target "C:\FTP\$FTPUserGroupName" -Force | Out-Null
 
-    # Permisos de solo lectura para la carpeta Public
-    # Nota: Usa "Users" si tu Windows Server está en inglés, o "Usuarios" si está en español.
-    Write-Host "[*] Aplicando permisos NTFS..." -ForegroundColor Cyan
-    icacls "$rutaUser" /inheritance:r /grant:r "${user}:(RX)" /grant:r "Administradores:(OI)(CI)F" /grant:r "SYSTEM:(OI)(CI)F" /Q | Out-Null
-icacls "$rutaUser\$user" /grant:r "${user}:(OI)(CI)M" /T /Q | Out-Null
-
-    # 4. Configurar Directorios Virtuales
-    $siteName = "FTPServer_Admin"
-    # Importante: El enlace virtual debe ir dentro del contenedor LocalUser en IIS
-    Import-Module WebAdministration
-    New-WebVirtualDirectory -Site $siteName -Name "LocalUser/$user/$grupo" -PhysicalPath $rutaGrupoFisica -ErrorAction SilentlyContinue | Out-Null
-    New-WebVirtualDirectory -Site $siteName -Name "LocalUser/$user/Public" -PhysicalPath $rutaPublicFisica -ErrorAction SilentlyContinue | Out-Null
-
-    Write-Host "[+] Permisos NTFS y enlaces virtuales automatizados correctamente." -ForegroundColor Green
-}
-
-function Configurar-Anonimo-FTP {
-    # Cambiado al nombre real de tu sitio
-    $siteName = "FTPServer_Admin" 
-    Import-Module WebAdministration
+    Write-Host "[*] 4. Aplicando permisos NTFS..." -ForegroundColor Cyan
+    icacls "C:\FTP\Reprobados" /grant "Reprobados:(OI)(CI)M" /Q | Out-Null
+    icacls "C:\FTP\Recursadores" /grant "Recursadores:(OI)(CI)M" /Q | Out-Null
+    icacls "C:\FTP\LocalUser\Public\General" /grant "Reprobados:(OI)(CI)M" /Q | Out-Null
+    icacls "C:\FTP\LocalUser\Public\General" /grant "Recursadores:(OI)(CI)M" /Q | Out-Null
+    icacls "C:\FTP\LocalUser\Public\General" /grant "IUSR:(OI)(CI)RX" /Q | Out-Null
     
-    # Habilitar autenticación anónima
-    Set-WebConfigurationProperty -Filter "/system.ftpServer/security/authentication/anonymousAuthentication" `
-                                 -PSPath "IIS:\Sites\$siteName" -Name "enabled" -Value $true
-    
-    Write-Host "[+] Acceso anónimo configurado (Solo Lectura) en $siteName." -ForegroundColor Green
+    icacls $rutaUser /grant:r "${FTPUserName}:(OI)(CI)M" /Q | Out-Null
+
+    Write-Host "[+] ¡Listo! Usuario $FTPUserName creado y enjaulado correctamente." -ForegroundColor Green
 }

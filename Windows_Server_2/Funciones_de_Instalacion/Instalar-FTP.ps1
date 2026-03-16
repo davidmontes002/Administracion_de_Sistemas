@@ -1,54 +1,46 @@
 function Instalar-FTP {
-    Write-Host "=================================" -ForegroundColor Cyan
-    Write-Host "     INSTALACION SERVIDOR FTP" -ForegroundColor Cyan
-    Write-Host "=================================" -ForegroundColor Cyan
+    Write-Host '=================================' -ForegroundColor Cyan
+    Write-Host '     INSTALACION SERVIDOR FTP' -ForegroundColor Cyan
+    Write-Host '=================================' -ForegroundColor Cyan
 
-    # Verificar si el rol de Servidor FTP ya está instalado
-    $feature = Get-WindowsFeature -Name Web-Ftp-Server
-    if ($feature.Installed) {
-        Write-Host "[+] El rol de Servidor FTP ya está instalado." -ForegroundColor Yellow
-        
-        $servicio = Get-Service -Name ftpsvc -ErrorAction SilentlyContinue
-        if ($servicio -and $servicio.Status -ne "Running") {
-            Write-Host "[!] El servicio FTP está detenido. Iniciándolo..." -ForegroundColor Yellow
-            Start-Service ftpsvc
-        }
-        return
+    Install-WindowsFeature Web-Server -IncludeAllSubFeature | Out-Null
+    Install-WindowsFeature Web-FTP-Service -IncludeAllSubFeature | Out-Null
+    Install-WindowsFeature Web-FTP-Server -IncludeAllSubFeature | Out-Null
+    Install-WindowsFeature Web-Basic-Auth | Out-Null
+
+    New-NetFirewallRule -DisplayName 'FTP' -Direction Inbound -Protocol TCP -LocalPort 21 -Action Allow -ErrorAction SilentlyContinue | Out-Null
+    Import-Module WebAdministration
+
+    if (-not (Test-Path 'C:\FTP')) {
+        mkdir 'C:\FTP' | Out-Null
+        mkdir 'C:\FTP\LocalUser' | Out-Null
+        mkdir 'C:\FTP\LocalUser\Public' | Out-Null
+        mkdir 'C:\FTP\LocalUser\Public\General' | Out-Null
+    }
+    
+    icacls 'C:\FTP\LocalUser\Public' /inheritance:r /Q | Out-Null
+    icacls 'C:\FTP\LocalUser\Public' /remove 'BUILTIN\Usuarios' /Q | Out-Null
+    icacls 'C:\FTP\LocalUser\Public' /grant 'IUSR:(OI)(CI)RX' /Q | Out-Null
+    icacls 'C:\FTP\LocalUser\Public' /grant 'SYSTEM:(OI)(CI)F' /Q | Out-Null
+    icacls 'C:\FTP\LocalUser\Public' /grant 'Administradores:(OI)(CI)F' /Q | Out-Null
+
+    icacls 'C:\FTP\LocalUser\Public\General' /grant 'IUSR:(OI)(CI)RX' /Q | Out-Null
+
+    if (-not (Get-WebSite -Name 'FTP' -ErrorAction SilentlyContinue)) {
+        New-WebFtpSite -Name 'FTP' -Port 21 -PhysicalPath 'C:\FTP' | Out-Null
+        Write-Host '[+] Sitio FTP creado en C:\FTP.'
+    } else {
+        Write-Host '[-] El sitio FTP ya existe.'
     }
 
-    Write-Host "Instalando Servicio FTP y herramientas de administración para WS2022..." -ForegroundColor Green
-    try {
-        # Instalación de características específicas para Windows Server 2022
-        # Web-Mgmt-Console: Consola de IIS
-        # Web-Scripting-Tools: Habilita el módulo WebAdministration (necesario para los cmdlets)
-        Install-WindowsFeature -Name Web-Ftp-Server, Web-Mgmt-Console, Web-Scripting-Tools -IncludeManagementTools -ErrorAction Stop
+    Set-ItemProperty 'IIS:\Sites\FTP' -Name ftpServer.security.authentication.basicAuthentication.enabled -Value $true
+    Set-ItemProperty 'IIS:\Sites\FTP' -Name ftpServer.security.authentication.anonymousAuthentication.enabled -Value $true
+    Set-ItemProperty 'IIS:\Sites\FTP' -Name ftpServer.security.authentication.anonymousAuthentication.username -Value 'IUSR'
 
-        # Crear estructura de carpetas base para replicar la lógica de Linux
-        $basePath = "C:\inetpub\ftproot"
-        $paths = @(
-            "$basePath\Public",
-            "$basePath\grupos",
-            "$basePath\usuarios"
-        )
+    Clear-WebConfiguration -Filter '/system.ftpServer/security/authorization' -PSPath 'IIS:\' -Location 'FTP'
+    Add-WebConfiguration '/system.ftpServer/security/authorization' -Value @{accessType='Allow';users='?';permissions=1} -PSPath 'IIS:\' -Location 'FTP'
+    Add-WebConfiguration '/system.ftpServer/security/authorization' -Value @{accessType='Allow';users='*';permissions=3} -PSPath 'IIS:\' -Location 'FTP'
 
-        foreach ($p in $paths) {
-            if (-not (Test-Path $p)) {
-                New-Item -Path $p -ItemType Directory | Out-Null
-                Write-Host "[+] Carpeta creada: $p" -ForegroundColor Gray
-            }
-        }
-
-        # Configurar servicio en automático e iniciar
-        Set-Service ftpsvc -StartupType Automatic
-        Start-Service ftpsvc
-
-        Write-Host "=================================" -ForegroundColor Green
-        Write-Host "FTP instalado. REINICIA LA CONSOLA PARA CARGAR LOS COMANDOS." -ForegroundColor Green
-        Write-Host "=================================" -ForegroundColor Green
-    }
-    catch {
-        Write-Host "Error durante la instalación: $($_.Exception.Message)" -ForegroundColor Red
-    }
-
+    Write-Host '[+] Instalacion base completada.'
     Pause
 }
