@@ -1,4 +1,4 @@
-Clear-Host
+# Clear-Host
 
 # ===== Cargar módulos =====
 . "$PSScriptRoot\Validaciones\Validaciones.ps1"
@@ -25,24 +25,25 @@ $Global:ServerIP = ""
 function Menu-Principal {
 
     do {
-        Clear-Host
-        Write-Host "====== SERVIDOR DHCP / DNS ======"
+       # Clear-Host
+        Write-Host "====== SERVIDOR DHCP / DNS / FTP / WEB ======"
         Write-Host "1. Instalar DHCP"
         Write-Host "2. Instalar DNS"
         Write-Host "3. Instalar SSH"
-	Write-Host "4. Instalar FTP"
+        Write-Host "4. Instalar FTP"
         Write-Host "5. Configurar DHCP"
         Write-Host "6. Configurar DNS"
         Write-Host "7. Configurar SSH"
         Write-Host "8. Eliminar Scope DHCP"
         Write-Host "9. Eliminar Dominio DNS"
-	Write-Host "10. Registrar Grupo FTP"
-	Write-Host "11. Registrar Alumno FTP"
-	Write-Host "12. Configurar Acceso Anonimo"
-	Write-Host "13. Inicar FTP"
-        Write-Host "14. Estado Servicios"
-	Write-Host "15. Servidores Web (HTTP)"
-        Write-Host "16. Salir"
+        Write-Host "10. Registrar Grupo FTP"
+        Write-Host "11. Registrar Alumno FTP"
+        Write-Host "12. Configurar Acceso Anonimo"
+        Write-Host "13. Inicar FTP"
+        Write-Host "14. Blindar FTP con SSL (Práctica 7)"
+        Write-Host "15. Estado Servicios"
+        Write-Host "16. Servidores Web (HTTP / Orquestador)"
+        Write-Host "17. Salir"
         Write-Host ""
 
         $op = Read-Host "Seleccione una opcion"
@@ -50,31 +51,33 @@ function Menu-Principal {
         switch ($op) {
             "1" { Instalar-DHCP }
             "2" { Instalar-DNS }
-	    "3" { Instalar-SSH }
-	    "4" { Instalar-FTP }
+            "3" { Instalar-SSH }
+            "4" { Instalar-FTP }
             "5" { Configurar-DHCP }
             "6" { Configurar-DNS }
             "7" { Configurar-SSH }
             "8" { Eliminar-Scope }
             "9" { Eliminar-Dominio }
-	    "10" { Registrar-Grupo-FTP }
-	    "11" { Registrar-Alumno-FTP }
-	    "12" { Configurar-Anonimo-FTP }
-	    "13" { Inicializar-Sitio-FTP }
-            "14" { Estado-Servicios }
-	    "15" { 
+            "10" { Registrar-Grupo-FTP }
+            "11" { Registrar-Alumno-FTP }
+            "12" { Configurar-Anonimo-FTP }
+            "13" { Inicializar-Sitio-FTP }
+            "14" { Activar-Seguridad-FTPS }
+            "15" { Estado-Servicios }
+            "16" { 
                 Clear-Host
-                Write-Host "=== DESPLIEGUE HTTP ==="
+                Write-Host "=== ORQUESTADOR HÍBRIDO (PRÁCTICA 7) ===" -ForegroundColor Yellow
                 Write-Host "1. Desplegar IIS (Requisito Forzoso)"
-                Write-Host "2. Desplegar Nginx (via Chocolatey)"
-                Write-Host "3. Desplegar Apache (via Chocolatey)"
-                $subOp = Read-Host "Seleccione el servidor"
+                Write-Host "2. Desplegar Nginx (Web o FTP Privado)"
+                Write-Host "3. Desplegar Apache (Web o FTP Privado)"
+                $subOp = Read-Host "Seleccione el servidor a instalar"
+                
                 if ($subOp -eq "1") { Desplegar-IIS }
                 elseif ($subOp -eq "2") { Desplegar-Nginx-Windows }
                 elseif ($subOp -eq "3") { Desplegar-Apache-Windows }
                 else { Write-Host "Opcion invalida"; Pause }
             }
-            "16" { break }
+            "17" { break }
             default { Write-Host "Opcion invalida"; Pause }
         }
 
