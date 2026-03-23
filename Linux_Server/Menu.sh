@@ -21,9 +21,11 @@ source ./Configuraciones/FTP_conf/Registro_alumnos.sh
 source ./Configuraciones/FTP_conf/cambio_grupo.sh
 source ./Configuraciones/FTP_conf/anonimo.sh
 source ./Configuraciones/FTP_conf/Verificar_usuario.sh
+source ./Configuraciones/FTP_conf/Preparar_Repositorio.sh
 source ./Monitoreos/Lista-Dominios.sh
 source ./Monitoreos/Clientes-Conectados.sh
 source ./Monitoreos/Reinicio-DHCP.sh
+source ./Configuraciones/ssl_funciones.sh
 
 while true; do
     clear
@@ -125,27 +127,31 @@ while true; do
 		    4)
         		while true; do
             		    clear
-            		    echo "================================="
-            		    echo "        CONFIGURACION FTP"
-            		    echo "================================="
-            		    echo "1) Registrar Grupo"
-            		    echo "2) Registrar Alumno"
-            		    echo "3) Cambiar Grupo"
-            		    echo "4) Activar/Desactivar Anonimo"
+			    echo "================================="
+			    echo "        CONFIGURACION FTP"
+			    echo "================================="
+			    echo "1) Registrar Grupo"
+			    echo "2) Registrar Alumno"
+			    echo "3) Cambiar Grupo"
+			    echo "4) Activar/Desactivar Anonimo"
 			    echo "5) Verificar Usuarios existentes"
-            		    echo "6) Volver"
-            		    echo "================================="
-            		    read -p "Seleccione una opcion: " ftpconf
+			    echo "6) Preparar Bóveda FTP (Práctica 7)"
+			    echo "7) Activar FTPS SSL (Práctica 7)"
+			    echo "8) Volver"
+			    echo "================================="
+			read -p "Seleccione una opcion: " ftpconf
 
-            		    case $ftpconf in
-                		1) crear_grupo ;;
-                		2) Registrar_Alumno ;;
-                		3) Cambiar_Grupo ;;
-                		4) Usuario_Anonimo ;;
-				5) Verificar_usuario.sh ;;
-                		6) break ;;
-                		*) echo "Opcion invalida"; sleep 2 ;;
-            		    esac
+			case $ftpconf in
+			    1) crear_grupo ;;
+			    2) Registrar_Alumno ;;
+			    3) Cambiar_Grupo ;;
+			    4) Usuario_Anonimo ;;
+			    5) verificar_usuarios_ftp ;;
+			    6) Preparar_Repositorio ;;
+			    7) Activar_SSL_FTP ;;
+			    8) break ;;
+			    *) echo "Opcion invalida"; sleep 2 ;;
+			esac
         		done
         		;;
                     5) break ;;
