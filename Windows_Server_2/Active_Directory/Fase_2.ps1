@@ -42,7 +42,7 @@ foreach ($Fila in $UsuariosCSV) {
     }
 
     # --- B. Crear el usuario en AD ---
-    $PassSegura = ConvertTo-SecureString $Fila.contraseña -AsPlainText -Force
+    $PassSegura = ConvertTo-SecureString $Fila.contrasena -AsPlainText -Force
     $RutaCarpetaRed = "\\$NombreServidor\Usuarios\$($Fila.usuario)"
     
     Write-Host "   -> Creando usuario: $($Fila.usuario) en la UO $UO_Nombre"
