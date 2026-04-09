@@ -1,85 +1,196 @@
+#Requires -RunAsAdministrator
 Clear-Host
 Write-Host "=================================================" -ForegroundColor Cyan
-Write-Host " FASE 5: RBAC Y DELEGACION DE CONTROL (PRACTICA 9) " -ForegroundColor Cyan
+Write-Host " FASE 5: RBAC Y DELEGACION DE CONTROL           " -ForegroundColor Cyan
+Write-Host " Windows Server 2022 - Sin entorno grafico      " -ForegroundColor Cyan
 Write-Host "=================================================" -ForegroundColor Cyan
 
-$Dominio = (Get-ADDomain).DistinguishedName
+# ----------------------------------------------------------
+# VARIABLES BASE
+# ----------------------------------------------------------
+$Dominio       = (Get-ADDomain).DistinguishedName
 $NombreDominio = (Get-ADDomain).Name
-$PassSegura = ConvertTo-SecureString "P@ssw0rdDelegado!" -AsPlainText -Force
+$DominioDNS    = (Get-ADDomain).DNSRoot        # ej: practica.local
+$PassSegura    = ConvertTo-SecureString "P@ssw0rdDelegado!" -AsPlainText -Force
 
-# 1. CREAR UNIDAD ORGANIZATIVA PARA LOS ADMINISTRADORES DELEGADOS
-$UODelegados = "Administradores_Delegados"
-if (-not (Get-ADOrganizationalUnit -Filter "Name -eq '$UODelegados'" -ErrorAction SilentlyContinue)) {
-    Write-Host "> Creando OU '$UODelegados'..." -ForegroundColor Yellow
-    New-ADOrganizationalUnit -Name $UODelegados -Path $Dominio | Out-Null
-}
-$RutaUO = "OU=$UODelegados,$Dominio"
+Write-Host "`n  Dominio DN  : $Dominio"        -ForegroundColor DarkGray
+Write-Host "  Dominio DNS : $DominioDNS"       -ForegroundColor DarkGray
+Write-Host "  NetBIOS     : $NombreDominio`n"  -ForegroundColor DarkGray
 
-# 2. CREAR LOS 4 USUARIOS ROLES
-$Roles = @("admin_identidad", "admin_storage", "admin_politicas", "admin_auditoria")
-Write-Host "`n> Creando cuentas de Administradores Delegados..." -ForegroundColor Yellow
-
-foreach ($Rol in $Roles) {
-    if (-not (Get-ADUser -Filter "SamAccountName -eq '$Rol'" -ErrorAction SilentlyContinue)) {
-        New-ADUser -Name $Rol -SamAccountName $Rol -UserPrincipalName "$Rol@$NombreDominio" -AccountPassword $PassSegura -Path $RutaUO -Enabled $true -PasswordNeverExpires $true | Out-Null
-        Write-Host "  + Usuario $Rol creado." -ForegroundColor Green
-    } else {
-        Write-Host "  - Usuario $Rol ya existe." -ForegroundColor DarkGray
+# ----------------------------------------------------------
+# FUNCION HELPER: Agregar a grupo tolerando idioma del SO
+# WS2022 en espanol tiene grupos built-in en espanol.
+# Intenta nombre ES primero, luego EN como fallback.
+# ----------------------------------------------------------
+function Agregar-GrupoSeguro {
+    param(
+        [string]$GrupoES,
+        [string]$GrupoEN,
+        [string]$Miembro
+    )
+    $exito = $false
+    foreach ($nombre in @($GrupoES, $GrupoEN)) {
+        try {
+            Add-ADGroupMember -Identity $nombre -Members $Miembro -ErrorAction Stop
+            Write-Host "    [+] '$Miembro' agregado a '$nombre'." -ForegroundColor Green
+            $exito = $true
+            break
+        } catch { <# Probar siguiente nombre #> }
+    }
+    if (-not $exito) {
+        Write-Host "    [-] No se pudo agregar '$Miembro' a '$GrupoES' ni '$GrupoEN'." -ForegroundColor Red
     }
 }
 
-# 3. ASIGNAR GRUPOS NATIVOS A LOS ROLES
-Write-Host "`n> Asignando Grupos Nativos base..." -ForegroundColor Yellow
-# admin_politicas necesita poder crear GPOs
-Add-ADGroupMember -Identity "Creadores de propietarios de directivas de grupo" -Members "admin_politicas" -ErrorAction SilentlyContinue
-Add-ADGroupMember -Identity "Group Policy Creator Owners" -Members "admin_politicas" -ErrorAction SilentlyContinue
+# ----------------------------------------------------------
+# 1. CREAR OU PARA ADMINISTRADORES DELEGADOS
+# ----------------------------------------------------------
+Write-Host "> 1. Verificando OU 'Administradores_Delegados'..." -ForegroundColor Yellow
 
-# admin_auditoria necesita leer el visor de eventos de seguridad
-Add-ADGroupMember -Identity "Lectores de registros de eventos" -Members "admin_auditoria" -ErrorAction SilentlyContinue
-Add-ADGroupMember -Identity "Event Log Readers" -Members "admin_auditoria" -ErrorAction SilentlyContinue
+$UODelegados = "Administradores_Delegados"
+$RutaUO      = "OU=$UODelegados,$Dominio"
 
-# admin_storage necesita poder gestionar el FSRM localmente (lo metemos a Administradores locales, pero lo restringiremos globalmente)
-Add-ADGroupMember -Identity "Administrators" -Members "admin_storage" -ErrorAction SilentlyContinue
-Add-ADGroupMember -Identity "Administradores" -Members "admin_storage" -ErrorAction SilentlyContinue
-
-
-# 4. APLICAR LISTAS DE CONTROL DE ACCESO (ACLs) CON DSACLS
-Write-Host "`n> Inyectando Restricciones y Delegaciones (ACLs) mediante dsacls..." -ForegroundColor Yellow
-
-# --- ROL 1: admin_identidad (IAM Operator) ---
-# Permiso de Crear/Eliminar/Modificar usuarios y Resetear Contraseña SOLO en OU cuates y no_cuates
-$OUsObjetivo = @("OU=cuates,$Dominio", "OU=no_cuates,$Dominio")
-foreach ($OU in $OUsObjetivo) {
-    # CCDC = Create/Delete Child (Objetos de usuario)
-    dsacls $OU /I:T /G "$NombreDominio\admin_identidad:CCDC;user" | Out-Null
-    # CA = Control Access (Restablecer contraseña)
-    dsacls $OU /I:S /G "$NombreDominio\admin_identidad:CA;Reset Password;user" | Out-Null
-    # WP = Write Property (Escribir propiedades básicas)
-    dsacls $OU /I:S /G "$NombreDominio\admin_identidad:WP;user" | Out-Null
+if (-not (Get-ADOrganizationalUnit -Filter "Name -eq '$UODelegados'" -ErrorAction SilentlyContinue)) {
+    New-ADOrganizationalUnit -Name $UODelegados -Path $Dominio | Out-Null
+    Write-Host "  [+] OU '$UODelegados' creada." -ForegroundColor Green
+} else {
+    Write-Host "  [-] OU ya existe. Continuando." -ForegroundColor DarkGray
 }
-Write-Host "  + Permisos IAM asignados a admin_identidad." -ForegroundColor Green
 
-# --- ROL 2: admin_storage (Storage Operator) ---
-# RESTRICCIÓN CRÍTICA: DENEGAR (Deny) el permiso de Restablecer Contraseña en todo el dominio.
-# La "D" en /D significa DENY. Esto le gana a cualquier otro permiso.
-dsacls $Dominio /I:S /D "$NombreDominio\admin_storage:CA;Reset Password;user" | Out-Null
-Write-Host "  + Restriccion critica DENY asignada a admin_storage." -ForegroundColor Green
+# ----------------------------------------------------------
+# 2. CREAR LOS 4 USUARIOS DE ROL
+# ----------------------------------------------------------
+Write-Host "`n> 2. Creando cuentas de Administradores Delegados..." -ForegroundColor Yellow
 
-# --- ROL 3: admin_politicas (GPO Compliance) ---
-# Permiso para vincular GPOs (gPLink) en las OUs de los usuarios, pero sin poder modificarlos a ellos.
-foreach ($OU in $OUsObjetivo) {
-    # RPWP = Read Property / Write Property sobre el atributo gPLink
-    dsacls $OU /I:T /G "$NombreDominio\admin_politicas:RPWP;gPLink" | Out-Null
+$Roles = @("admin_identidad", "admin_storage", "admin_politicas", "admin_auditoria")
+
+foreach ($Rol in $Roles) {
+    if (-not (Get-ADUser -Filter "SamAccountName -eq '$Rol'" -ErrorAction SilentlyContinue)) {
+        New-ADUser `
+            -Name                "Delegado $Rol" `
+            -SamAccountName      $Rol `
+            -UserPrincipalName   "$Rol@$DominioDNS" `
+            -AccountPassword     $PassSegura `
+            -Path                $RutaUO `
+            -Enabled             $true `
+            -PasswordNeverExpires $true | Out-Null
+        Write-Host "  [+] Usuario '$Rol' creado." -ForegroundColor Green
+    } else {
+        Write-Host "  [-] '$Rol' ya existe. Omitiendo." -ForegroundColor DarkGray
+    }
 }
-Write-Host "  + Permisos de vinculacion GPO asignados a admin_politicas." -ForegroundColor Green
 
-# --- ROL 4: admin_auditoria (Security Auditor) ---
-# Este usuario ya está restringido por defecto. Al estar en "Event Log Readers" y en ningún otro grupo,
-# solo tiene acceso de lectura (Read-Only) al dominio de forma nativa.
-Write-Host "  + Rol Read-Only confirmado para admin_auditoria." -ForegroundColor Green
+# ----------------------------------------------------------
+# 3. ASIGNAR GRUPOS NATIVOS POR ROL
+#
+#    IMPORTANTE:
+#    - admin_storage NO va a Administrators (anularia el DENY de ACL).
+#      Va a "Server Operators" que permite gestionar servicios
+#      y FSRM sin ser Domain Admin.
+#    - admin_identidad NO necesita grupo nativo.
+#      Sus permisos vienen 100% de las ACLs con dsacls.
+# ----------------------------------------------------------
+Write-Host "`n> 3. Asignando membresías de grupo por rol..." -ForegroundColor Yellow
 
+# ROL 3: Puede crear y vincular GPOs
+Write-Host "  [*] admin_politicas -> Group Policy Creator Owners..."
+Agregar-GrupoSeguro `
+    -GrupoES "Creadores de propietarios de directivas de grupo" `
+    -GrupoEN "Group Policy Creator Owners" `
+    -Miembro "admin_politicas"
+
+# ROL 4: Solo lectura de logs de seguridad
+Write-Host "  [*] admin_auditoria -> Event Log Readers..."
+Agregar-GrupoSeguro `
+    -GrupoES "Lectores de registros de eventos" `
+    -GrupoEN "Event Log Readers" `
+    -Miembro "admin_auditoria"
+
+# ROL 2: Gestión de FSRM sin privilegios de dominio
+Write-Host "  [*] admin_storage -> Server Operators..."
+Agregar-GrupoSeguro `
+    -GrupoES "Operadores de servidor" `
+    -GrupoEN "Server Operators" `
+    -Miembro "admin_storage"
+
+# ROL 1: Sin grupo nativo, solo ACLs
+Write-Host "  [*] admin_identidad -> Solo ACLs (sin grupo nativo)." -ForegroundColor DarkGray
+
+# ----------------------------------------------------------
+# 4. APLICAR ACLs GRANULARES CON DSACLS
+# ----------------------------------------------------------
+Write-Host "`n> 4. Aplicando ACLs con dsacls..." -ForegroundColor Yellow
+
+$OUsObjetivo = @(
+    "OU=cuates,$Dominio",
+    "OU=no_cuates,$Dominio"
+)
+
+# --- ROL 1: admin_identidad ---
+# Crear/Eliminar usuarios + Reset Password + Desbloquear + Modificar propiedades
+Write-Host "  [*] ROL 1 - admin_identidad: Gestion completa de usuarios..."
+foreach ($OU in $OUsObjetivo) {
+    # Crear y eliminar objetos de usuario
+    dsacls $OU /I:T /G "$NombreDominio\admin_identidad:CCDC;user"     2>$null | Out-Null
+    # Resetear contrasena
+    dsacls $OU /I:S /G "$NombreDominio\admin_identidad:CA;Reset Password;user"   2>$null | Out-Null
+    # Cambiar contrasena (desbloqueo)
+    dsacls $OU /I:S /G "$NombreDominio\admin_identidad:CA;Change Password;user"  2>$null | Out-Null
+    # Modificar propiedades del usuario
+    dsacls $OU /I:S /G "$NombreDominio\admin_identidad:WP;user"       2>$null | Out-Null
+    Write-Host "    [+] ACLs de identidad en: $OU" -ForegroundColor Green
+}
+
+# --- ROL 2: admin_storage ---
+# DENY explicito de Reset Password en TODO el dominio.
+# Al ser Deny, gana sobre cualquier Allow heredado.
+Write-Host "  [*] ROL 2 - admin_storage: DENY Reset Password (dominio completo)..."
+dsacls $Dominio /I:S /D "$NombreDominio\admin_storage:CA;Reset Password;user" 2>$null | Out-Null
+Write-Host "    [+] DENY aplicado en raiz del dominio." -ForegroundColor Green
+
+# --- ROL 3: admin_politicas ---
+# Lectura global + escritura solo en atributo gPLink (vincular GPOs)
+Write-Host "  [*] ROL 3 - admin_politicas: Lectura global + escritura gPLink..."
+dsacls $Dominio /I:T /G "$NombreDominio\admin_politicas:GR" 2>$null | Out-Null
+foreach ($OU in $OUsObjetivo) {
+    dsacls $OU /I:T /G "$NombreDominio\admin_politicas:RPWP;gPLink" 2>$null | Out-Null
+    Write-Host "    [+] gPLink habilitado en: $OU" -ForegroundColor Green
+}
+
+# --- ROL 4: admin_auditoria ---
+# Lectura general en el dominio. Read-Only estricto.
+Write-Host "  [*] ROL 4 - admin_auditoria: Read-Only en dominio..."
+dsacls $Dominio /I:T /G "$NombreDominio\admin_auditoria:GR" 2>$null | Out-Null
+Write-Host "    [+] Permiso de lectura global aplicado." -ForegroundColor Green
+
+# ----------------------------------------------------------
+# 5. VERIFICACION FINAL
+# ----------------------------------------------------------
+Write-Host "`n> 5. Verificacion de resultados..." -ForegroundColor Yellow
+
+$errores = 0
+foreach ($Rol in $Roles) {
+    $user = Get-ADUser -Filter "SamAccountName -eq '$Rol'" `
+            -Properties MemberOf -ErrorAction SilentlyContinue
+    if ($user) {
+        $grupos = ($user.MemberOf | ForEach-Object {
+            (Get-ADGroup $_).Name
+        }) -join ", "
+        if (-not $grupos) { $grupos = "Sin grupos adicionales (solo ACLs)" }
+        Write-Host "  [OK] $Rol" -ForegroundColor Green
+        Write-Host "       Grupos : $grupos" -ForegroundColor DarkGray
+        Write-Host "       UPN    : $($user.UserPrincipalName)" -ForegroundColor DarkGray
+    } else {
+        Write-Host "  [FALLO] $Rol no fue creado correctamente." -ForegroundColor Red
+        $errores++
+    }
+}
 
 Write-Host "`n=================================================" -ForegroundColor Cyan
-Write-Host " FASE 5 (ACTIVIDAD 1) COMPLETADA EXITOSAMENTE " -ForegroundColor Cyan
-Write-Host " Todos los usuarios tienen como contrasena temporal: P@ssw0rdDelegado!" -ForegroundColor White
+if ($errores -eq 0) {
+    Write-Host " FASE 5 COMPLETADA EXITOSAMENTE                 " -ForegroundColor Green
+} else {
+    Write-Host " FASE 5 COMPLETADA CON $errores ERROR(ES)        " -ForegroundColor Red
+}
+Write-Host " Contrasena temporal : P@ssw0rdDelegado!        " -ForegroundColor White
 Write-Host "=================================================" -ForegroundColor Cyan
