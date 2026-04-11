@@ -1,7 +1,7 @@
 #Requires -RunAsAdministrator
 Clear-Host
 Write-Host "=================================================" -ForegroundColor Cyan
-Write-Host " FASE 7: MFA VIA SSH + TOTP                     " -ForegroundColor Cyan
+Write-Host " FASE 7: MFA VIA SSH + TOTP (DEFINITIVA)        " -ForegroundColor Cyan
 Write-Host " Windows Server 2022 - Sin entorno grafico      " -ForegroundColor Cyan
 Write-Host "=================================================" -ForegroundColor Cyan
 
@@ -11,15 +11,23 @@ Write-Host "=================================================" -ForegroundColor 
 $RutaMSI      = "C:\Users\Administrador\Windows_Server\Active_Directory\MFA_Install.msi"
 $RutaMultiOTP = "C:\Program Files\multiOTP"
 $ExeMultiOTP  = "$RutaMultiOTP\multiotp.exe"
-$LlaveSecreta = "JBSWY3DPEHPK3PXP"
-$UsuarioMFA   = "administrator"
 $LogMSI       = "C:\mfa_install.log"
 $VCDest       = "C:\vc_redist.x64.exe"
 $sshdConfig   = "C:\ProgramData\ssh\sshd_config"
 $sshdScript   = "C:\ProgramData\ssh\multiotp_auth.ps1"
 
+# Usuarios a registrar en multiOTP con sus llaves Base32
+# Llave del administrador ya registrada en Google Authenticator
+$usuarios = @{
+    "administrator"   = "JBSWY3DPEHPK3PXP"
+    "admin_identidad" = "JBSWY3DPEHPK3PXA"
+    "admin_storage"   = "JBSWY3DPEHPK3PXB"
+    "admin_politicas" = "JBSWY3DPEHPK3PXC"
+    "admin_auditoria" = "JBSWY3DPEHPK3PXD"
+}
+
 # ----------------------------------------------------------
-# PASO 1: Verificar que el instalador MSI existe
+# PASO 1: Verificar instalador MSI
 # ----------------------------------------------------------
 Write-Host "`n> 1. Verificando instalador MSI..." -ForegroundColor Yellow
 
@@ -31,6 +39,7 @@ Write-Host "  [+] Instalador encontrado." -ForegroundColor Green
 
 # ----------------------------------------------------------
 # PASO 2: Instalar Visual C++ Redistributable x64
+# APRENDIDO: Sin esto el MSI falla con error 1603
 # ----------------------------------------------------------
 Write-Host "`n> 2. Verificando Visual C++ Redistributable x64..." -ForegroundColor Yellow
 
@@ -50,7 +59,7 @@ if ($vcInstalado -and $vcInstalado.Installed -eq 1) {
             -UseBasicParsing
         Write-Host "  [+] Descarga completada." -ForegroundColor Green
     } catch {
-        Write-Host "  [-] Error al descargar VC++: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "  [-] Error: $($_.Exception.Message)" -ForegroundColor Red
         exit
     }
 
@@ -59,10 +68,10 @@ if ($vcInstalado -and $vcInstalado.Installed -eq 1) {
         -Wait -PassThru
 
     switch ($vcResult.ExitCode) {
-        0    { Write-Host "  [+] VC++ instalado correctamente." -ForegroundColor Green }
+        0    { Write-Host "  [+] VC++ instalado." -ForegroundColor Green }
         3010 { Write-Host "  [+] VC++ instalado (reinicio pendiente, continuamos)." -ForegroundColor Green }
         default {
-            Write-Host "  [-] VC++ fallo con codigo: $($vcResult.ExitCode)" -ForegroundColor Red
+            Write-Host "  [-] VC++ fallo: $($vcResult.ExitCode)" -ForegroundColor Red
             exit
         }
     }
@@ -70,7 +79,7 @@ if ($vcInstalado -and $vcInstalado.Installed -eq 1) {
 }
 
 # ----------------------------------------------------------
-# PASO 3: Instalar motor multiOTP desde MSI
+# PASO 3: Instalar motor multiOTP
 # ----------------------------------------------------------
 Write-Host "`n> 3. Instalando motor multiOTP..." -ForegroundColor Yellow
 
@@ -86,75 +95,126 @@ $hayError = Get-Content $LogMSI -ErrorAction SilentlyContinue |
             Where-Object { $_ -match "Return value 3|error 1603|Installation failed" }
 
 if ($hayError) {
-    Write-Host "  [-] El MSI reporto errores:" -ForegroundColor Red
+    Write-Host "  [-] MSI reporto errores:" -ForegroundColor Red
     $hayError | Select-Object -First 3 |
         ForEach-Object { Write-Host "      $_" -ForegroundColor DarkGray }
     exit
 }
-Write-Host "  [+] Motor multiOTP instalado." -ForegroundColor Green
 
-# Verificar que multiotp.exe existe
 if (-not (Test-Path $ExeMultiOTP)) {
-    Write-Host "  [-] multiotp.exe no encontrado en: $ExeMultiOTP" -ForegroundColor Red
+    Write-Host "  [-] multiotp.exe no encontrado." -ForegroundColor Red
     exit
 }
-Write-Host "  [+] multiotp.exe verificado." -ForegroundColor Green
+Write-Host "  [+] Motor multiOTP instalado." -ForegroundColor Green
 
 # ----------------------------------------------------------
-# PASO 4: Configurar usuario TOTP con -createga
-# Usa directamente la llave Base32 de Google Authenticator
+# PASO 4: Dar permisos a la carpeta de multiOTP
+# APRENDIDO: En contexto SSH el proceso corre como usuario
+# de dominio y necesita permisos de lectura/escritura en
+# la carpeta users para leer los archivos .db
 # ----------------------------------------------------------
-Write-Host "`n> 4. Configurando usuario TOTP..." -ForegroundColor Yellow
+Write-Host "`n> 4. Aplicando permisos en carpeta multiOTP..." -ForegroundColor Yellow
 
-# Limpiar usuario anterior si existe
-$dbPath = "$RutaMultiOTP\users\$UsuarioMFA.db"
-if (Test-Path $dbPath) {
-    Remove-Item $dbPath -Force
-    Write-Host "  [!] Usuario anterior eliminado." -ForegroundColor Yellow
+icacls $RutaMultiOTP /grant "Todos:(OI)(CI)F" /T 2>$null | Out-Null
+Write-Host "  [+] Permisos aplicados a: $RutaMultiOTP" -ForegroundColor Green
+
+# ----------------------------------------------------------
+# PASO 5: Sincronizar reloj del servidor
+# APRENDIDO: TOTP depende del tiempo. Si el reloj difiere
+# mas de 30 segundos el token siempre falla con ExitCode 99
+# Se configura permanentemente en el registro para que
+# sobreviva reinicios del servidor.
+# ----------------------------------------------------------
+Write-Host "`n> 5. Sincronizando reloj del servidor..." -ForegroundColor Yellow
+
+# Configurar NTP permanente en el registro
+Set-ItemProperty `
+    -Path "HKLM:\SYSTEM\CurrentControlSet\Services\W32Time\Parameters" `
+    -Name "NtpServer" -Value "time.google.com,0x8"
+Set-ItemProperty `
+    -Path "HKLM:\SYSTEM\CurrentControlSet\Services\W32Time\Parameters" `
+    -Name "Type" -Value "NTP"
+
+# Configurar intervalo de sincronizacion cada hora
+Set-ItemProperty `
+    -Path "HKLM:\SYSTEM\CurrentControlSet\Services\W32Time\TimeProviders\NtpClient" `
+    -Name "SpecialPollInterval" -Value 3600 -ErrorAction SilentlyContinue
+
+w32tm /config /manualpeerlist:"time.google.com,0x8" /syncfromflags:manual /reliable:YES /update 2>$null | Out-Null
+net stop w32tm  2>$null | Out-Null
+net start w32tm 2>$null | Out-Null
+w32tm /resync /force 2>$null | Out-Null
+Start-Sleep -Seconds 3
+
+$syncStatus = w32tm /query /status 2>$null
+if ($syncStatus -match "Capa: [2-9]|Stratum: [2-9]") {
+    Write-Host "  [+] Reloj sincronizado con time.google.com." -ForegroundColor Green
+} else {
+    Write-Host "  [!] Sincronizacion pendiente, continuando..." -ForegroundColor Yellow
 }
 
-# Crear usuario con -createga (acepta Base32 directamente)
-& $ExeMultiOTP -createga $UsuarioMFA $LlaveSecreta
-Start-Sleep -Seconds 1
+# ----------------------------------------------------------
+# PASO 6: Crear usuarios TOTP en multiOTP
+# APRENDIDO:
+# - Borrar .db antes de crear (evita "User already exists")
+# - Usar -createga (acepta Base32, no usar -create)
+# - Configurar bloqueo global
+# ----------------------------------------------------------
+Write-Host "`n> 6. Configurando usuarios TOTP en multiOTP..." -ForegroundColor Yellow
 
-# Sin PIN adicional
-& $ExeMultiOTP -set $UsuarioMFA prefix-pin=0 2>$null
-
-# Bloqueo: 3 intentos fallidos = 30 minutos
+# Configuracion global de bloqueo
 & $ExeMultiOTP -config max-block-failures=3      2>$null
 & $ExeMultiOTP -config failure-delayed-time=1800  2>$null
 
-# Verificar que el usuario existe
-$p = New-Object System.Diagnostics.ProcessStartInfo
-$p.FileName               = $ExeMultiOTP
-$p.Arguments              = "-user-info $UsuarioMFA"
-$p.RedirectStandardOutput = $true
-$p.RedirectStandardError  = $true
-$p.UseShellExecute        = $false
-$proc = [System.Diagnostics.Process]::Start($p)
-$proc.WaitForExit()
-$info = $proc.StandardOutput.ReadToEnd()
+foreach ($u in $usuarios.GetEnumerator()) {
+    $nombre = $u.Key
+    $llave  = $u.Value
+    $dbPath = "$RutaMultiOTP\users\$nombre.db"
 
-if ($info -match "Algorithm.*totp") {
-    Write-Host "  [+] Usuario configurado con TOTP." -ForegroundColor Green
-} else {
-    Write-Host "  [-] Error al crear usuario." -ForegroundColor Red
-    Write-Host $info -ForegroundColor DarkGray
-    exit
+    # Borrar .db anterior si existe
+    if (Test-Path $dbPath) {
+        Remove-Item $dbPath -Force
+    }
+
+    # Crear usuario con -createga
+    & $ExeMultiOTP -createga $nombre $llave 2>$null
+    Start-Sleep -Seconds 1
+
+    # Sin PIN adicional
+    & $ExeMultiOTP -set $nombre prefix-pin=0 2>$null
+
+    # Verificar con ProcessStartInfo
+    $p = New-Object System.Diagnostics.ProcessStartInfo
+    $p.FileName               = $ExeMultiOTP
+    $p.Arguments              = "-user-info $nombre"
+    $p.WorkingDirectory       = $RutaMultiOTP
+    $p.RedirectStandardOutput = $true
+    $p.RedirectStandardError  = $true
+    $p.UseShellExecute        = $false
+    $proc = [System.Diagnostics.Process]::Start($p)
+    $proc.WaitForExit()
+
+    if ($proc.ExitCode -eq 19) {
+        Write-Host "  [+] $nombre | Llave: $llave" -ForegroundColor Green
+    } else {
+        Write-Host "  [-] Error creando $nombre (ExitCode: $($proc.ExitCode))" -ForegroundColor Red
+    }
 }
 
 # ----------------------------------------------------------
-# PASO 5: Probar token ANTES de configurar SSH
-# Usa el metodo correcto que captura ExitCode
+# PASO 7: Probar token del administrador
+# APRENDIDO: Usar ProcessStartInfo con WorkingDirectory
+# para capturar ExitCode correctamente
 # ----------------------------------------------------------
-Write-Host "`n> 5. Prueba obligatoria del token TOTP..." -ForegroundColor Yellow
-Write-Host "  Abre Google Authenticator. Llave: $LlaveSecreta" -ForegroundColor Cyan
-Write-Host "  Espera a que el codigo cambie y usa el nuevo." -ForegroundColor Yellow
-$token = Read-Host "  Ingresa el codigo de 6 digitos"
+Write-Host "`n> 7. Prueba del token principal (administrator)..." -ForegroundColor Yellow
+Write-Host "  Abre Google Authenticator. Llave: $($usuarios['administrator'])" -ForegroundColor Cyan
+Write-Host "  Espera a que el codigo cambie y usalo." -ForegroundColor Yellow
+$token = Read-Host "  Codigo de 6 digitos"
 
 $p = New-Object System.Diagnostics.ProcessStartInfo
 $p.FileName               = $ExeMultiOTP
-$p.Arguments              = "$UsuarioMFA $token"
+$p.Arguments              = "administrator $token"
+$p.WorkingDirectory       = $RutaMultiOTP
 $p.RedirectStandardOutput = $true
 $p.RedirectStandardError  = $true
 $p.UseShellExecute        = $false
@@ -167,89 +227,117 @@ Write-Host "  ExitCode: $exitCode" -ForegroundColor DarkGray
 if ($exitCode -eq 0) {
     Write-Host "  [OK] Token valido." -ForegroundColor Green
 } else {
-    Write-Host "  [-] Token invalido." -ForegroundColor Red
-    Write-Host "  [!] Verifica la llave en Authenticator: $LlaveSecreta" -ForegroundColor Yellow
-    Write-Host "  [!] O sincroniza el reloj: w32tm /resync /force" -ForegroundColor Yellow
+    Write-Host "  [-] Token invalido (ExitCode: $exitCode)." -ForegroundColor Red
+    Write-Host "  [!] Verifica la llave y el reloj antes de continuar." -ForegroundColor Yellow
+    Write-Host "      Ejecuta: w32tm /resync /force" -ForegroundColor Yellow
     exit
 }
 
 # ----------------------------------------------------------
-# PASO 6: Verificar OpenSSH instalado
+# PASO 8: Verificar OpenSSH
 # ----------------------------------------------------------
-Write-Host "`n> 6. Verificando OpenSSH..." -ForegroundColor Yellow
+Write-Host "`n> 8. Verificando OpenSSH Server..." -ForegroundColor Yellow
 
 $ssh = Get-WindowsCapability -Online |
        Where-Object Name -like 'OpenSSH.Server*'
 
 if ($ssh.State -ne "Installed") {
-    Write-Host "  [!] OpenSSH no instalado. Instalando..." -ForegroundColor Yellow
+    Write-Host "  [!] Instalando OpenSSH..." -ForegroundColor Yellow
     Add-WindowsCapability -Online -Name $ssh.Name | Out-Null
 }
 
 Set-Service sshd -StartupType Automatic
 Start-Service sshd -ErrorAction SilentlyContinue
-Write-Host "  [+] OpenSSH Server activo." -ForegroundColor Green
+Write-Host "  [+] OpenSSH activo." -ForegroundColor Green
 
 # ----------------------------------------------------------
-# PASO 7: Crear script de validacion MFA para SSH
-# Usa ProcessStartInfo para capturar ExitCode correctamente
+# PASO 9: Crear script de validacion MFA para SSH
+# APRENDIDO:
+# - [Console]::ReadLine() en lugar de Read-Host
+#   (Read-Host falla en modo no interactivo de SSH)
+# - WorkingDirectory = $RutaMultiOTP
+#   (sin esto ExitCode 21 "User doesn't exist")
+# - Mapeo administrador -> administrator
+#   (Windows en español usa "administrador")
+# - Permisos Todos:F en carpeta multiOTP
+#   (sin esto ExitCode 99 en contexto SSH)
+# - SCP bypass via SSH_ORIGINAL_COMMAND
 # ----------------------------------------------------------
-Write-Host "`n> 7. Creando script de validacion MFA para SSH..." -ForegroundColor Yellow
+Write-Host "`n> 9. Creando script de validacion MFA..." -ForegroundColor Yellow
 
 $scriptContenido = @'
-# ============================================
-# Script MFA multiOTP para SSH
-# Se ejecuta en cada conexion SSH entrante
-# ============================================
+$exe     = "C:\Program Files\multiOTP\multiotp.exe"
+$baseDir = "C:\Program Files\multiOTP"
+$user    = $env:USERNAME.ToLower()
 
-$exe  = "C:\Program Files\multiOTP\multiotp.exe"
+# Bypass para SCP/SFTP - no pedir token en transferencias
+$originalCmd = $env:SSH_ORIGINAL_COMMAND
+if ($originalCmd -match "scp|sftp|rsync") {
+    Invoke-Expression $originalCmd
+    exit
+}
 
-# Normalizar usuario a minusculas (multiOTP es case-sensitive)
-$user = $env:USERNAME.ToLower()
+# Mapeo Windows -> multiOTP
+# "administrador" es el nombre en espanol de "administrator"
+$mapaUsuarios = @{
+    "administrador"   = "administrator"
+    "administrator"   = "administrator"
+    "admin_identidad" = "admin_identidad"
+    "admin_storage"   = "admin_storage"
+    "admin_politicas" = "admin_politicas"
+    "admin_auditoria" = "admin_auditoria"
+}
 
-Write-Host ""
-Write-Host "============================================"
-Write-Host "  AUTENTICACION MFA REQUERIDA"
-Write-Host "  Usuario: $user"
-Write-Host "============================================"
-Write-Host ""
-$token = Read-Host "Ingresa tu codigo de Google Authenticator"
+$userMultiOTP = $mapaUsuarios[$user]
+if (-not $userMultiOTP) { $userMultiOTP = $user }
 
-# Validar usando ProcessStartInfo para capturar ExitCode correctamente
+Write-Output ""
+Write-Output "============================================"
+Write-Output "  AUTENTICACION MFA REQUERIDA"
+Write-Output "  Usuario: $user"
+Write-Output "============================================"
+Write-Output ""
+Write-Output "Ingresa tu codigo de Google Authenticator:"
+
+# [Console]::ReadLine() funciona en modo no interactivo SSH
+# Read-Host NO funciona y lanza PSInvalidOperationException
+$token = [Console]::ReadLine()
+
+# WorkingDirectory es CRITICO - sin esto ExitCode 21/99
+# en contexto SSH aunque el usuario exista
 $p = New-Object System.Diagnostics.ProcessStartInfo
 $p.FileName               = $exe
-$p.Arguments              = "$user $token"
+$p.Arguments              = "$userMultiOTP $token"
+$p.WorkingDirectory       = $baseDir
 $p.RedirectStandardOutput = $true
 $p.RedirectStandardError  = $true
 $p.UseShellExecute        = $false
-
 $proc = [System.Diagnostics.Process]::Start($p)
 $proc.WaitForExit()
 $exitCode = $proc.ExitCode
 
 if ($exitCode -eq 0) {
-    Write-Host ""
-    Write-Host "[OK] Token valido. Acceso concedido." -ForegroundColor Green
-    Write-Host ""
-    # Iniciar sesion PowerShell normal
+    Write-Output ""
+    Write-Output "[OK] Token valido. Acceso concedido."
+    Write-Output ""
     & powershell.exe -NoLogo
 } else {
-    Write-Host ""
-    Write-Host "[-] Token invalido (codigo: $exitCode). Acceso denegado." -ForegroundColor Red
-    Write-Host ""
+    Write-Output ""
+    Write-Output "[-] Token invalido. Acceso denegado."
+    Write-Output ""
     exit 1
 }
 '@
 
+Remove-Item $sshdScript -Force -ErrorAction SilentlyContinue
 $scriptContenido | Out-File $sshdScript -Encoding UTF8 -Force
 Write-Host "  [+] Script creado en: $sshdScript" -ForegroundColor Green
 
 # ----------------------------------------------------------
-# PASO 8: Configurar sshd_config con ForceCommand
+# PASO 10: Configurar sshd_config con ForceCommand
 # ----------------------------------------------------------
-Write-Host "`n> 8. Configurando sshd_config..." -ForegroundColor Yellow
+Write-Host "`n> 10. Configurando sshd_config..." -ForegroundColor Yellow
 
-# Crear sshd_config base si no existe
 if (-not (Test-Path $sshdConfig)) {
     New-Item -Path (Split-Path $sshdConfig) -ItemType Directory -Force | Out-Null
     @"
@@ -259,23 +347,18 @@ PubkeyAuthentication yes
 "@ | Out-File $sshdConfig -Encoding UTF8
 }
 
-# Leer config actual
 $config = Get-Content $sshdConfig -Raw
-
-# Eliminar ForceCommand anterior si existe
 $config = $config -replace "(?m)^\s*ForceCommand.*(\r?\n)?", ""
 $config = $config -replace "(?m)^\s*# MFA.*(\r?\n)?", ""
 
-# Agregar ForceCommand al final
 $forceCmd = "`n# MFA multiOTP - Token TOTP requerido en cada conexion SSH`nForceCommand powershell.exe -ExecutionPolicy Bypass -NonInteractive -File `"$sshdScript`"`n"
 ($config.TrimEnd() + $forceCmd) | Out-File $sshdConfig -Encoding UTF8 -Force
-
-Write-Host "  [+] sshd_config actualizado con ForceCommand." -ForegroundColor Green
+Write-Host "  [+] ForceCommand configurado." -ForegroundColor Green
 
 # ----------------------------------------------------------
-# PASO 9: Abrir puerto SSH en firewall
+# PASO 11: Firewall y reinicio SSH
 # ----------------------------------------------------------
-Write-Host "`n> 9. Verificando firewall SSH..." -ForegroundColor Yellow
+Write-Host "`n> 11. Firewall y reinicio SSH..." -ForegroundColor Yellow
 
 $regla = Get-NetFirewallRule -DisplayName "SSH-MFA-22" -ErrorAction SilentlyContinue
 if (-not $regla) {
@@ -286,28 +369,23 @@ if (-not $regla) {
         -LocalPort   22 `
         -Action      Allow | Out-Null
 }
-Write-Host "  [+] Puerto 22 abierto." -ForegroundColor Green
 
-# ----------------------------------------------------------
-# PASO 10: Reiniciar SSH para aplicar cambios
-# ----------------------------------------------------------
-Write-Host "`n> 10. Reiniciando SSH..." -ForegroundColor Yellow
 Restart-Service sshd -Force
 Start-Sleep -Seconds 2
-$estado = (Get-Service sshd).Status
-Write-Host "  [+] SSH estado: $estado" -ForegroundColor Green
+Write-Host "  [+] SSH estado: $((Get-Service sshd).Status)" -ForegroundColor Green
 
 # ----------------------------------------------------------
-# PASO 11: Verificacion final
+# PASO 12: Verificacion final
 # ----------------------------------------------------------
-Write-Host "`n> 11. Verificacion final..." -ForegroundColor Yellow
+Write-Host "`n> 12. Verificacion final..." -ForegroundColor Yellow
 
 $checks = [ordered]@{
-    "Motor multiotp.exe"       = (Test-Path $ExeMultiOTP)
-    "Usuario TOTP configurado" = ($exitCode -eq 0)
-    "Script MFA creado"        = (Test-Path $sshdScript)
-    "sshd_config actualizado"  = ((Get-Content $sshdConfig -Raw) -match "ForceCommand")
-    "SSH corriendo"            = ((Get-Service sshd).Status -eq "Running")
+    "Motor multiotp.exe"          = (Test-Path $ExeMultiOTP)
+    "Permisos carpeta multiOTP"   = ((icacls $RutaMultiOTP 2>$null) -match "Todos")
+    "Token administrador valido"  = ($exitCode -eq 0)
+    "Script MFA creado"           = (Test-Path $sshdScript)
+    "ForceCommand en sshd_config" = ((Get-Content $sshdConfig -Raw) -match "ForceCommand")
+    "SSH corriendo"               = ((Get-Service sshd).Status -eq "Running")
 }
 
 $todoOK = $true
@@ -327,11 +405,14 @@ if ($todoOK) {
     Write-Host " FASE 7 COMPLETADA CON ERRORES                  " -ForegroundColor Red
 }
 Write-Host "=================================================" -ForegroundColor Cyan
-Write-Host " Flujo de acceso MFA via SSH:" -ForegroundColor White
-Write-Host "   ssh Administrador@<IP_SERVIDOR>" -ForegroundColor DarkGray
-Write-Host "   1. Ingresa contrasena de Windows." -ForegroundColor DarkGray
-Write-Host "   2. Script pide codigo de Google Authenticator." -ForegroundColor DarkGray
-Write-Host "   3. Token valido  = acceso concedido." -ForegroundColor DarkGray
-Write-Host "   4. Token invalido = conexion cerrada." -ForegroundColor DarkGray
-Write-Host "   5. 3 fallos = cuenta bloqueada 30 minutos." -ForegroundColor DarkGray
+Write-Host " Usuarios y llaves para Google Authenticator:   " -ForegroundColor White
+Write-Host "   Administrador  : JBSWY3DPEHPK3PXP            " -ForegroundColor DarkGray
+Write-Host "   admin_identidad: JBSWY3DPEHPK3PXA            " -ForegroundColor DarkGray
+Write-Host "   admin_storage  : JBSWY3DPEHPK3PXB            " -ForegroundColor DarkGray
+Write-Host "   admin_politicas: JBSWY3DPEHPK3PXC            " -ForegroundColor DarkGray
+Write-Host "   admin_auditoria: JBSWY3DPEHPK3PXD            " -ForegroundColor DarkGray
+Write-Host "=================================================" -ForegroundColor Cyan
+Write-Host " Para conectarte:" -ForegroundColor White
+Write-Host "   ssh Administrador@<IP>                       " -ForegroundColor DarkGray
+Write-Host "   ssh admin_identidad@<IP>                     " -ForegroundColor DarkGray
 Write-Host "=================================================" -ForegroundColor Cyan
