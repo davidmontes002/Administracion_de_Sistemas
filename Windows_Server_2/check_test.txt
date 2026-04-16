@@ -1,0 +1,32 @@
+Test 1
+accion 1 comprobada
+accion 2 comprobada
+paso 1:
+Entrar a admin_identidad
+$nuevaPass = ConvertTo-SecureString "284613-oc" -AsPlainText -Force
+Set-ADAccountPassword -Identity "simi" -NewPassword $nuevaPass -Reset
+Set-ADAccountPassword -Identity "mondaca" -NewPassword $nuevaPass -Reset
+intentar lo mismo pero en admin_storage
+
+Test 2
+Comprobada
+Entrar en la principal y cambiar la contra a admin_identidad
+$passCorta = ConvertTo-SecureString "Pass1234" -AsPlainText -Force
+Set-ADAccountPassword -Identity "admin_identidad" -NewPassword $passCorta -Reset
+
+
+Test 3
+comprobado
+Entrar a admin_identidad
+
+
+Test 4
+comprobado
+intentar entrar a admin identidad y poner los tokens mal
+despues entrar administrador y correr bloqueos
+
+
+
+Test 5
+entrar a administrador y correr el script de auditoria
+y entrar a la carpeta a ver el archivo
