@@ -18,27 +18,23 @@ Write-Host "  Dominio DNS : $DominioDNS"       -ForegroundColor DarkGray
 Write-Host "  NetBIOS     : $NombreDominio`n"  -ForegroundColor DarkGray
 
 # ----------------------------------------------------------
-# FUNCION HELPER: Agregar a grupo tolerando idioma del SO
-# WS2022 en espanol tiene grupos built-in en espanol.
-# Intenta nombre ES primero, luego EN como fallback.
+# FUNCION HELPER: Agregar a grupo mediante SID o RID
 # ----------------------------------------------------------
-function Agregar-GrupoSeguro {
+function Agregar-GrupoPorSID {
     param(
-        [string]$GrupoES,
-        [string]$GrupoEN,
-        [string]$Miembro
+        [string]$Identificador,
+        [string]$Miembro,
+        [string]$NombreLogico
     )
-    $exito = $false
-    foreach ($nombre in @($GrupoES, $GrupoEN)) {
-        try {
-            Add-ADGroupMember -Identity $nombre -Members $Miembro -ErrorAction Stop
-            Write-Host "    [+] '$Miembro' agregado a '$nombre'." -ForegroundColor Green
-            $exito = $true
-            break
-        } catch { <# Probar siguiente nombre #> }
-    }
-    if (-not $exito) {
-        Write-Host "    [-] No se pudo agregar '$Miembro' a '$GrupoES' ni '$GrupoEN'." -ForegroundColor Red
+    try {
+        # Busca el grupo en AD que coincida con el SID/RID proporcionado
+        $Grupo = Get-ADGroup -Identity $Identificador -ErrorAction Stop
+        if ($Grupo) {
+            Add-ADGroupMember -Identity $Grupo.ObjectGUID -Members $Miembro -ErrorAction Stop
+            Write-Host "    [+] '$Miembro' agregado a '$($Grupo.Name)' ($NombreLogico)." -ForegroundColor Green
+        }
+    } catch {
+        Write-Host "    [-] Error al intentar agregar '$Miembro' al grupo $NombreLogico." -ForegroundColor Red
     }
 }
 
@@ -81,40 +77,32 @@ foreach ($Rol in $Roles) {
 }
 
 # ----------------------------------------------------------
-# 3. ASIGNAR GRUPOS NATIVOS POR ROL
-#
-#    IMPORTANTE:
-#    - admin_storage NO va a Administrators (anularia el DENY de ACL).
-#      Va a "Server Operators" que permite gestionar servicios
-#      y FSRM sin ser Domain Admin.
-#    - admin_identidad NO necesita grupo nativo.
-#      Sus permisos vienen 100% de las ACLs con dsacls.
+# 3. ASIGNAR GRUPOS NATIVOS POR ROL (Usando SIDs/RIDs Universales)
 # ----------------------------------------------------------
 Write-Host "`n> 3. Asignando membresías de grupo por rol..." -ForegroundColor Yellow
 
-# ROL 3: Puede crear y vincular GPOs
+# ROL 3: Group Policy Creator Owners (RID: 520, es un grupo del dominio)
+# Calculamos el SID dinámicamente usando el SID del dominio actual
 Write-Host "  [*] admin_politicas -> Group Policy Creator Owners..."
-Agregar-GrupoSeguro `
-    -GrupoES "Creadores de propietarios de directivas de grupo" `
-    -GrupoEN "Group Policy Creator Owners" `
-    -Miembro "admin_politicas"
+try {
+    $DomainSID = (Get-ADDomain).DomainSID.Value
+    $SID_GPO = "$DomainSID-520"
+    Agregar-GrupoPorSID -Identificador $SID_GPO -Miembro "admin_politicas" -NombreLogico "GPO Creator Owners"
+} catch {
+    Write-Host "    [-] Fallo critico al calcular SID de GPO." -ForegroundColor Red
+}
 
-# ROL 4: Solo lectura de logs de seguridad
+# ROL 4: Event Log Readers (SID Local universal: S-1-5-32-573)
 Write-Host "  [*] admin_auditoria -> Event Log Readers..."
-Agregar-GrupoSeguro `
-    -GrupoES "Lectores de registros de eventos" `
-    -GrupoEN "Event Log Readers" `
-    -Miembro "admin_auditoria"
+Agregar-GrupoPorSID -Identificador "S-1-5-32-573" -Miembro "admin_auditoria" -NombreLogico "Event Log Readers"
 
-# ROL 2: Gestión de FSRM sin privilegios de dominio
+# ROL 2: Server Operators (SID Local universal: S-1-5-32-549)
 Write-Host "  [*] admin_storage -> Server Operators..."
-Agregar-GrupoSeguro `
-    -GrupoES "Operadores de servidor" `
-    -GrupoEN "Server Operators" `
-    -Miembro "admin_storage"
+Agregar-GrupoPorSID -Identificador "S-1-5-32-549" -Miembro "admin_storage" -NombreLogico "Server Operators"
 
 # ROL 1: Sin grupo nativo, solo ACLs
 Write-Host "  [*] admin_identidad -> Solo ACLs (sin grupo nativo)." -ForegroundColor DarkGray
+
 
 # ----------------------------------------------------------
 # 4. APLICAR ACLs GRANULARES CON DSACLS
@@ -127,29 +115,21 @@ $OUsObjetivo = @(
 )
 
 # --- ROL 1: admin_identidad ---
-# Crear/Eliminar usuarios + Reset Password + Desbloquear + Modificar propiedades
 Write-Host "  [*] ROL 1 - admin_identidad: Gestion completa de usuarios..."
 foreach ($OU in $OUsObjetivo) {
-    # Crear y eliminar objetos de usuario
     dsacls $OU /I:T /G "$NombreDominio\admin_identidad:CCDC;user"     2>$null | Out-Null
-    # Resetear contrasena
     dsacls $OU /I:S /G "$NombreDominio\admin_identidad:CA;Reset Password;user"   2>$null | Out-Null
-    # Cambiar contrasena (desbloqueo)
     dsacls $OU /I:S /G "$NombreDominio\admin_identidad:CA;Change Password;user"  2>$null | Out-Null
-    # Modificar propiedades del usuario
     dsacls $OU /I:S /G "$NombreDominio\admin_identidad:WP;user"       2>$null | Out-Null
     Write-Host "    [+] ACLs de identidad en: $OU" -ForegroundColor Green
 }
 
 # --- ROL 2: admin_storage ---
-# DENY explicito de Reset Password en TODO el dominio.
-# Al ser Deny, gana sobre cualquier Allow heredado.
 Write-Host "  [*] ROL 2 - admin_storage: DENY Reset Password (dominio completo)..."
 dsacls $Dominio /I:S /D "$NombreDominio\admin_storage:CA;Reset Password;user" 2>$null | Out-Null
 Write-Host "    [+] DENY aplicado en raiz del dominio." -ForegroundColor Green
 
 # --- ROL 3: admin_politicas ---
-# Lectura global + escritura solo en atributo gPLink (vincular GPOs)
 Write-Host "  [*] ROL 3 - admin_politicas: Lectura global + escritura gPLink..."
 dsacls $Dominio /I:T /G "$NombreDominio\admin_politicas:GR" 2>$null | Out-Null
 foreach ($OU in $OUsObjetivo) {
@@ -158,7 +138,6 @@ foreach ($OU in $OUsObjetivo) {
 }
 
 # --- ROL 4: admin_auditoria ---
-# Lectura general en el dominio. Read-Only estricto.
 Write-Host "  [*] ROL 4 - admin_auditoria: Read-Only en dominio..."
 dsacls $Dominio /I:T /G "$NombreDominio\admin_auditoria:GR" 2>$null | Out-Null
 Write-Host "    [+] Permiso de lectura global aplicado." -ForegroundColor Green
@@ -170,16 +149,12 @@ Write-Host "`n> 5. Verificacion de resultados..." -ForegroundColor Yellow
 
 $errores = 0
 foreach ($Rol in $Roles) {
-    $user = Get-ADUser -Filter "SamAccountName -eq '$Rol'" `
-            -Properties MemberOf -ErrorAction SilentlyContinue
+    $user = Get-ADUser -Filter "SamAccountName -eq '$Rol'" -Properties MemberOf -ErrorAction SilentlyContinue
     if ($user) {
-        $grupos = ($user.MemberOf | ForEach-Object {
-            (Get-ADGroup $_).Name
-        }) -join ", "
+        $grupos = ($user.MemberOf | ForEach-Object { (Get-ADGroup $_).Name }) -join ", "
         if (-not $grupos) { $grupos = "Sin grupos adicionales (solo ACLs)" }
         Write-Host "  [OK] $Rol" -ForegroundColor Green
         Write-Host "       Grupos : $grupos" -ForegroundColor DarkGray
-        Write-Host "       UPN    : $($user.UserPrincipalName)" -ForegroundColor DarkGray
     } else {
         Write-Host "  [FALLO] $Rol no fue creado correctamente." -ForegroundColor Red
         $errores++
