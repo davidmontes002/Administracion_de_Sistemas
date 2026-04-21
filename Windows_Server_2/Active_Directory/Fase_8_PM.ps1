@@ -309,6 +309,25 @@ function Agregar-NuevoUsuario {
     Add-ADGroupMember -Identity $grupoFGPP -Members $usuario -ErrorAction SilentlyContinue
     Write-Host "  [+] Agregado a '$grupoFGPP'." -ForegroundColor Green
 
+    # 4.5. Registrar usuario en multiOTP para MFA (NUEVO)
+    Write-Host "`n> Registrando en sistema MFA..." -ForegroundColor Yellow
+    $RutaMultiOTP = "C:\Program Files\multiOTP"
+    $ExeMultiOTP  = "$RutaMultiOTP\multiotp.exe"
+    
+    if ($OU_Nombre -eq "cuates") {
+        $llaveMFA = "JBSWY3DPEHPK3PXE"
+    } else {
+        $llaveMFA = "JBSWY3DPEHPK3PXF"
+    }
+    
+    # Nos movemos a la carpeta temporalmente para evitar errores del motor
+    Push-Location $RutaMultiOTP
+    if (Test-Path "$RutaMultiOTP\users\$usuario.db") { Remove-Item "$RutaMultiOTP\users\$usuario.db" -Force }
+    & $ExeMultiOTP -createga $usuario.ToLower() $llaveMFA | Out-Null
+    & $ExeMultiOTP -set $usuario.ToLower() prefix-pin=0 | Out-Null
+    Pop-Location
+    Write-Host "  [+] MFA configurado con llave del grupo." -ForegroundColor Green
+
     # 5. Perfil movil - solo verificar, NO pre-crear carpeta
     Write-Host "`n> 5. Perfil movil..." -ForegroundColor Yellow
     if (Test-Path $RutaPerfiles) {
