@@ -1,27 +1,22 @@
-# parche_notepad_moderno.ps1
-# Ejecutar como Administrador
+# parche_notepad_editor.ps1
+# Ejecutar como Administrador en el Servidor
 
 $Dominio = (Get-ADDomain).DistinguishedName
 $GpoAppLocker = "GPO_AppLocker"
 
-Write-Host "1. Obteniendo SID de Grupo_NoCuates..." -ForegroundColor Cyan
+Write-Host "Obteniendo SID de Grupo_NoCuates..." -ForegroundColor Cyan
 $SidNoCuates = (Get-ADGroup "Grupo_NoCuates").SID.Value
 
-Write-Host "2. Generando regla de bloqueo para Aplicaciones Empaquetadas (Appx)..." -ForegroundColor Cyan
-# Se deniega el Notepad moderno a los no cuates, y se permite todo lo demas a todos.
-$xmlAppx = @"
+Write-Host "Generando regla de bloqueo por EDITOR (Firma Digital) para Notepad..." -ForegroundColor Cyan
+
+# Esta regla lee el certificado interno. Bloquea cualquier cosa firmada por Microsoft
+# cuyo nombre binario original sea NOTEPAD.EXE, sin importar su nombre de archivo actual.
+$xmlPublisherDeny = @"
 <AppLockerPolicy Version="1">
-  <RuleCollection Type="Appx" EnforcementMode="Enabled">
-    <FilePublisherRule Id="$([guid]::NewGuid().ToString())" Name="Bloquear Notepad Moderno" Description="" UserOrGroupSid="$SidNoCuates" Action="Deny">
+  <RuleCollection Type="Exe" EnforcementMode="Enabled">
+    <FilePublisherRule Id="$([guid]::NewGuid().ToString())" Name="Bloqueo Absoluto Notepad (Firma/Editor)" Description="Bloquea el binario original sin importar renombre" UserOrGroupSid="$SidNoCuates" Action="Deny">
       <Conditions>
-        <FilePublisherCondition PublisherName="CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US" ProductName="Microsoft.WindowsNotepad" BinaryName="*">
-          <BinaryVersionRange LowSection="0.0.0.0" HighSection="*" />
-        </FilePublisherCondition>
-      </Conditions>
-    </FilePublisherRule>
-    <FilePublisherRule Id="$([guid]::NewGuid().ToString())" Name="Permitir resto de Apps Modernas" Description="" UserOrGroupSid="S-1-1-0" Action="Allow">
-      <Conditions>
-        <FilePublisherCondition PublisherName="*" ProductName="*" BinaryName="*">
+        <FilePublisherCondition PublisherName="O=MICROSOFT CORPORATION, L=REDMOND, S=WASHINGTON, C=US" ProductName="*" BinaryName="NOTEPAD.EXE">
           <BinaryVersionRange LowSection="0.0.0.0" HighSection="*" />
         </FilePublisherCondition>
       </Conditions>
@@ -30,12 +25,13 @@ $xmlAppx = @"
 </AppLockerPolicy>
 "@
 
-$TempXml = "$env:TEMP\AppxNotepad.xml"
-$xmlAppx | Out-File $TempXml -Encoding UTF8
+$TempXml = "$env:TEMP\NotepadPublisherDeny.xml"
+$xmlPublisherDeny | Out-File $TempXml -Encoding UTF8
 
 $RutaLdap = "LDAP://CN={$( (Get-GPO $GpoAppLocker).Id )},CN=Policies,CN=System,$Dominio"
 
-Write-Host "3. Inyectando regla a la GPO existente..." -ForegroundColor Cyan
+Write-Host "Inyectando regla a la GPO existente..." -ForegroundColor Cyan
 Set-AppLockerPolicy -XmlPolicy $TempXml -Ldap $RutaLdap -Merge
 
-Write-Host "[+] ¡Listo! Ahora ni el Notepad clásico ni el moderno podrán abrirse para los no cuates." -ForegroundColor Green
+Write-Host "[+] ¡Listo! Regla de Editor aplicada exitosamente." -ForegroundColor Green
+Write-Host "Nota: Esto cubre el Notepad clásico (.exe). El moderno (.appx) ya esta bloqueado por el parche anterior." -ForegroundColor DarkGray
